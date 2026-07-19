@@ -84,15 +84,22 @@ The system reads a TOML config file on startup that defines hosts and their moni
 - A valid TOML file with one host and no services produces a ping-only entry
 - A valid TOML file with hosts and port-based services produces entries with both ping and port status
 - An invalid TOML file causes a clear error message on startup and the program exits
+- If no config file exists, tmonitor falls back to a default config monitoring 127.0.0.1 (ping only)
 
 #### FR-4: Auto-Columned TUI Display
 
-The system renders each monitored host/service as a cell in a terminal layout that automatically computes the number of columns based on terminal width. Cells fill left-to-right, then top-to-bottom.
+The system renders each monitored host/service as a cell in a terminal layout that automatically computes the number of columns based on terminal width. Cells fill left-to-right, then top-to-bottom. Services appear as their own flat cells (not grouped under their parent host), with the hostname as a prefix (e.g. `web-server:ssh`).
+
+A persistent top bar shows the program name `tmonitor` on the left and the Pi system uptime on the right (e.g. `up 12d 3h 42m`). No column headers are shown.
+
+Cells are sorted in the order they appear in the config file. Down hosts are not reordered to the top — position is stable so the user learns where each host lives.
 
 **Consequences (testable):**
 - A narrow terminal (80 cols) shows fewer columns than a wide terminal (200 cols)
-- Each cell shows: `hostname  Up 23h 14m` (green) or `hostname  Down 0h 12m` (red)
+- Each cell shows: `hostname  Up  0d 23h 14m` (green) or `hostname  Down  0d 0h 12m` (red)
+- Duration format always includes days: `Xd Yh Zm` (e.g. `0d 23h 14m`, `12d 3h 5m`)
 - Display redraws on terminal resize
+- Top bar is always visible at the top of the display
 
 #### FR-5: Live Status with Counters
 
@@ -102,6 +109,7 @@ Each entry displays a green indicator with uptime counter when the host/service 
 - A healthy host shows green text with an uptime counter that counts up from zero
 - When a host fails a check, the display flips to red and a downtime counter starts counting up from zero
 - When a failed host recovers, the display flips to green and an uptime counter starts counting up from zero
+- Transitions are immediate with no animation, flash, or transition effect
 
 #### FR-6: Continuous Monitoring Loop
 
@@ -138,8 +146,9 @@ The system runs health checks on all configured hosts and services on a configur
 - ICMP ping health checks
 - TCP port health checks
 - TOML configuration file
-- Auto-columned terminal display
-- Green/red live status with uptime/downtime counters
+- Default config with 127.0.0.1 when no config file exists
+- Auto-columned terminal display with top bar (program name + Pi uptime)
+- Green/red live status with uptime/downtime counters (always showing days)
 - Cross-platform binary (Linux x86, Linux ARM, macOS)
 
 ### 6.2 Out of Scope for MVP
