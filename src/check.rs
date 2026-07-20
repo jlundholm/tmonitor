@@ -53,24 +53,35 @@ pub async fn check_port(
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ConcurrencyError {
+    #[error("max_concurrent must be at least 1, got {0}")]
+    ZeroCapacity(usize),
+    #[error("semaphore closed")]
+    SemaphoreClosed,
+}
+
 #[derive(Clone)]
 pub struct ConcurrencyGuard {
     semaphore: Arc<Semaphore>,
 }
 
 impl ConcurrencyGuard {
-    pub fn new(max_concurrent: usize) -> Self {
-        Self {
-            semaphore: Arc::new(Semaphore::new(max_concurrent)),
+    pub fn new(max_concurrent: usize) -> Result<Self, ConcurrencyError> {
+        if max_concurrent == 0 {
+            return Err(ConcurrencyError::ZeroCapacity(max_concurrent));
         }
+        Ok(Self {
+            semaphore: Arc::new(Semaphore::new(max_concurrent)),
+        })
     }
 
-    pub async fn acquire(&self) -> OwnedSemaphorePermit {
+    pub async fn acquire(&self) -> Result<OwnedSemaphorePermit, ConcurrencyError> {
         self.semaphore
             .clone()
             .acquire_owned()
             .await
-            .expect("semaphore closed")
+            .map_err(|_| ConcurrencyError::SemaphoreClosed)
     }
 
     pub fn available_permits(&self) -> usize {
@@ -85,9 +96,10 @@ mod tests {
     #[tokio::test]
     async fn test_ping_localhost_up() {
         match ping_host("127.0.0.1", Duration::from_secs(3)).await {
-            Ok(CheckResult::Up) => {} // expected
-            Ok(CheckResult::Down) => {} // acceptable if host refuses ICMP
-            Err(e) => eprintln!("ping 127.0.0.1 failed (may need net.ipv4.ping_group_range): {e}"),
+            Ok(CheckResult::Up) => {}
+            Ok(CheckResult::Down) => panic!("127.0.0.1 should be reachable via ICMP"),
+            Err(CheckError::InvalidAddress(_)) => panic!("127.0.0.1 is a valid address"),
+            Err(_) => {} // ICMP not permitted or network unavailable — acceptable
         }
     }
 
@@ -128,10 +140,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrency_guard_basic() {
-        let guard = ConcurrencyGuard::new(5);
+        let guard = ConcurrencyGuard::new(5).unwrap();
         assert_eq!(guard.available_permits(), 5);
 
-        let permit = guard.acquire().await;
+        let permit = guard.acquire().await.unwrap();
         assert_eq!(guard.available_permits(), 4);
         drop(permit);
         assert_eq!(guard.available_permits(), 5);
@@ -139,10 +151,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrency_guard_max_enforced() {
-        let guard = ConcurrencyGuard::new(3);
-        let p1 = guard.acquire().await;
-        let p2 = guard.acquire().await;
-        let p3 = guard.acquire().await;
+        let guard = ConcurrencyGuard::new(3).unwrap();
+        let p1 = guard.acquire().await.unwrap();
+        let p2 = guard.acquire().await.unwrap();
+        let p3 = guard.acquire().await.unwrap();
         assert_eq!(guard.available_permits(), 0);
 
         drop(p1);
@@ -154,13 +166,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrency_guard_acquire_release_cycle() {
-        let guard = ConcurrencyGuard::new(2);
+        let guard = ConcurrencyGuard::new(2).unwrap();
 
         for _ in 0..6 {
-            let permit = guard.acquire().await;
+            let permit = guard.acquire().await.unwrap();
             assert!(guard.available_permits() <= 1);
             drop(permit);
         }
         assert_eq!(guard.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_guard_zero_capacity() {
+        let result = ConcurrencyGuard::new(0);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ConcurrencyError::ZeroCapacity(0))));
     }
 }
