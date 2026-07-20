@@ -1,15 +1,40 @@
 mod check;
 mod config;
+mod engine;
 
 use std::env;
 use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let config_path = parse_args();
 
     match config::Config::load(config_path.as_deref()) {
         Ok(config) => {
-            println!("tmonitor config loaded: {} hosts", config.hosts.len());
+            let engine = match engine::Engine::new(config) {
+                Ok(e) => e,
+                Err(err) => {
+                    eprintln!("Error: {}", err);
+                    std::process::exit(1);
+                }
+            };
+            let _state = engine.shared_state();
+            let _host_order = engine.host_order();
+            let cancel = CancellationToken::new();
+            let engine_cancel = cancel.clone();
+
+            tokio::spawn(async move {
+                if let Err(e) = engine.run(engine_cancel).await {
+                    eprintln!("Engine error: {}", e);
+                }
+            });
+
+            // Display will be wired in story 1.5
+            // For now, hold the process alive
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
         }
         Err(e) => {
             eprintln!("Error: {}", e);

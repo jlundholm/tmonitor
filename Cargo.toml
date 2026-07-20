@@ -9,7 +9,8 @@ toml = "0.8"
 thiserror = "2"
 tokio = { version = "1.52", features = ["rt", "macros", "signal", "time", "net", "sync"] }
 surge-ping = "0.8"
+tokio-util = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1.52", features = ["rt", "macros", "time", "net", "sync"] }
+tokio = { version = "1.52", features = ["rt", "macros", "time", "net", "sync", "signal"] }
