@@ -1,3 +1,4 @@
+mod check;
 mod config;
 
 use std::env;
