@@ -20,7 +20,7 @@ pub enum CheckError {
     DnsLookupFailed(String),
 }
 
-pub async fn ping_host(address: &str, timeout: Duration) -> Result<CheckResult, CheckError> {
+pub async fn ping_host(address: &str) -> Result<CheckResult, CheckError> {
     use surge_ping::{Client, PingIdentifier, PingSequence};
 
     let addr: std::net::IpAddr = address
@@ -32,9 +32,8 @@ pub async fn ping_host(address: &str, timeout: Duration) -> Result<CheckResult, 
     let ident = PingIdentifier(0x1234);
     let mut pinger = client.pinger(addr, ident).await;
 
-    match tokio::time::timeout(timeout, pinger.ping(PingSequence(0), &[])).await {
-        Ok(Ok(_)) => Ok(CheckResult::Up),
-        Ok(Err(_)) => Ok(CheckResult::Down),
+    match pinger.ping(PingSequence(0), &[]).await {
+        Ok(_) => Ok(CheckResult::Up),
         Err(_) => Ok(CheckResult::Down),
     }
 }
@@ -95,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ping_localhost_up() {
-        match ping_host("127.0.0.1", Duration::from_secs(3)).await {
+        match ping_host("127.0.0.1").await {
             Ok(CheckResult::Up) => {}
             Ok(CheckResult::Down) => panic!("127.0.0.1 should be reachable via ICMP"),
             Err(CheckError::InvalidAddress(_)) => panic!("127.0.0.1 is a valid address"),
@@ -105,7 +104,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ping_unreachable_down() {
-        match ping_host("198.51.100.1", Duration::from_secs(2)).await {
+        match ping_host("198.51.100.1").await {
             Ok(CheckResult::Down) => {} // expected
             Ok(CheckResult::Up) => panic!("198.51.100.1 should be unreachable"),
             Err(e) => eprintln!("ping 198.51.100.1 failed (may need net.ipv4.ping_group_range): {e}"),
@@ -134,7 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_address() {
-        let result = ping_host("not-an-ip", Duration::from_secs(1)).await;
+        let result = ping_host("not-an-ip").await;
         assert!(matches!(result, Err(CheckError::InvalidAddress(_))));
     }
 

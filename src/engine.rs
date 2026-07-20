@@ -64,7 +64,7 @@ impl Engine {
         let mut host_order = Vec::new();
 
         for host in &config.hosts {
-            let key = HostKey(host.name.clone());
+            let key = HostKey(host.name.get_ref().clone());
             state_map.insert(key.clone(), HostState::new());
             host_order.push(key);
         }
@@ -87,42 +87,44 @@ impl Engine {
 
     pub async fn run(&self, cancel: CancellationToken) -> Result<(), EngineError> {
         loop {
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
             let cycle_start = Instant::now();
 
             let mut handles: Vec<(String, tokio::task::JoinHandle<CheckResult>)> = Vec::new();
 
             for host in &self.config.hosts {
-                if host.services.is_empty() {
+                {
                     let guard = self.guard.clone();
                     let address = host.address.clone();
-                    let host_name = host.name.clone();
+                    let host_name = host.name.get_ref().clone();
                     let handle = tokio::spawn(async move {
                         let _permit = match guard.acquire().await {
                             Ok(p) => p,
                             Err(_) => return CheckResult::Down,
                         };
-                        check::ping_host(&address, Duration::from_secs(5))
+                        check::ping_host(&address)
                             .await
                             .unwrap_or(CheckResult::Down)
                     });
                     handles.push((host_name, handle));
-                } else {
-                    for svc in &host.services {
-                        let guard = self.guard.clone();
-                        let address = host.address.clone();
-                        let port = svc.port;
-                        let host_name = host.name.clone();
-                        let handle = tokio::spawn(async move {
-                            let _permit = match guard.acquire().await {
-                                Ok(p) => p,
-                                Err(_) => return CheckResult::Down,
-                            };
-                            check::check_port(&address, port, Duration::from_secs(5))
-                                .await
-                                .unwrap_or(CheckResult::Down)
-                        });
-                        handles.push((host_name, handle));
-                    }
+                }
+                for svc in &host.services {
+                    let guard = self.guard.clone();
+                    let address = host.address.clone();
+                    let port = *svc.port.get_ref() as u16;
+                    let host_name = host.name.get_ref().clone();
+                    let handle = tokio::spawn(async move {
+                        let _permit = match guard.acquire().await {
+                            Ok(p) => p,
+                            Err(_) => return CheckResult::Down,
+                        };
+                        check::check_port(&address, port, Duration::from_secs(5))
+                            .await
+                            .unwrap_or(CheckResult::Down)
+                    });
+                    handles.push((host_name, handle));
                 }
             }
 
@@ -179,13 +181,14 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::config::{Config, HostConfig, ServiceConfig};
+    use serde_spanned::Spanned;
 
     fn test_config() -> Config {
         Config {
             interval_secs: 60,
             concurrency: 10,
             hosts: vec![HostConfig {
-                name: "localhost".to_string(),
+                name: Spanned::new(0..0, "localhost".to_string()),
                 address: "127.0.0.1".to_string(),
                 services: vec![],
             }],
@@ -295,12 +298,12 @@ mod tests {
             concurrency: 5,
             hosts: vec![
                 HostConfig {
-                    name: "beta".to_string(),
+                    name: Spanned::new(0..0, "beta".to_string()),
                     address: "10.0.0.2".to_string(),
                     services: vec![],
                 },
                 HostConfig {
-                    name: "alpha".to_string(),
+                    name: Spanned::new(0..0, "alpha".to_string()),
                     address: "10.0.0.1".to_string(),
                     services: vec![],
                 },
@@ -317,7 +320,7 @@ mod tests {
             interval_secs: 1,
             concurrency: 10,
             hosts: vec![HostConfig {
-                name: "localhost".to_string(),
+                name: Spanned::new(0..0, "localhost".to_string()),
                 address: "127.0.0.1".to_string(),
                 services: vec![],
             }],
@@ -347,7 +350,7 @@ mod tests {
             concurrency: 3,
             hosts: (0..10)
                 .map(|i| HostConfig {
-                    name: format!("host-{}", i),
+                    name: Spanned::new(0..0, format!("host-{}", i)),
                     address: "198.51.100.1".to_string(),
                     services: vec![],
                 })
@@ -375,11 +378,11 @@ mod tests {
             interval_secs: 1,
             concurrency: 10,
             hosts: vec![HostConfig {
-                name: "test-host".to_string(),
+                name: Spanned::new(0..0, "test-host".to_string()),
                 address: "127.0.0.1".to_string(),
                 services: vec![ServiceConfig {
                     name: "ssh".to_string(),
-                    port: 22,
+                    port: Spanned::new(0..0, 22),
                 }],
             }],
         };

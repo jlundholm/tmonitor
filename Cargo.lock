@@ -557,6 +557,7 @@ name = "tmonitor"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_spanned",
  "surge-ping",
  "tempfile",
  "thiserror 2.0.19",

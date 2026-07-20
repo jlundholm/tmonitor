@@ -24,16 +24,32 @@ async fn main() {
             let cancel = CancellationToken::new();
             let engine_cancel = cancel.clone();
 
-            tokio::spawn(async move {
-                if let Err(e) = engine.run(engine_cancel).await {
-                    eprintln!("Engine error: {}", e);
-                }
+            let mut engine_handle = tokio::spawn(async move {
+                engine.run(engine_cancel).await
             });
 
             // Display will be wired in story 1.5
-            // For now, hold the process alive
+            // For now, hold the process alive and monitor engine health
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                    result = &mut engine_handle => {
+                        match result {
+                            Ok(Ok(())) => {
+                                eprintln!("Engine exited cleanly");
+                                break;
+                            }
+                            Ok(Err(e)) => {
+                                eprintln!("Engine error: {}", e);
+                                std::process::exit(1);
+                            }
+                            Err(e) => {
+                                eprintln!("Engine panicked: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
             }
         }
         Err(e) => {
