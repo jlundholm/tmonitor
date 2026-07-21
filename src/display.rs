@@ -197,17 +197,17 @@ pub fn format_duration(d: Duration) -> String {
 
 pub fn compute_layout(
     terminal_size: (u16, u16),
-    host_count: usize,
+    cell_count: usize,
 ) -> (usize, usize, usize) {
     let (width, height) = terminal_size;
     let data_rows = (height as usize).saturating_sub(2);
-    let max_hosts_per_col = data_rows / 2;
-    if max_hosts_per_col == 0 || host_count == 0 {
+    let max_rows_per_col = data_rows / 2;
+    if max_rows_per_col == 0 || cell_count == 0 {
         return (1, 1, width as usize);
     }
-    let columns = (host_count + max_hosts_per_col - 1) / max_hosts_per_col;
+    let columns = (cell_count + max_rows_per_col - 1) / max_rows_per_col;
     let cell_width = (width as usize) / columns;
-    (columns, max_hosts_per_col, cell_width)
+    (columns, max_rows_per_col, cell_width)
 }
 
 pub async fn run_display(

@@ -48,6 +48,10 @@ pub enum ConfigError {
     InvalidInterval(u64),
     #[error("hostnames '{name1}' and '{name2}' become identical after truncation to 22 characters (lines ~{line1} and ~{line2})")]
     TruncationCollision { name1: String, name2: String, line1: usize, line2: usize },
+    #[error("host '{host}' has duplicate service name '{service}' (line ~{line}), first defined at line ~{first_line}")]
+    DuplicateServiceName { host: String, service: String, line: usize, first_line: usize },
+    #[error("hostname '{name}' contains '/' which conflicts with service label format (line ~{line})")]
+    HostnameSlash { name: String, line: usize },
 }
 
 fn byte_offset_to_line(content: &str, offset: usize) -> usize {
@@ -126,6 +130,14 @@ impl Config {
             }
             seen.insert(name, (i, line));
 
+            if name.contains('/') {
+                return Err(ConfigError::HostnameSlash {
+                    name: name.clone(),
+                    line,
+                });
+            }
+
+            let mut seen_services: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
             for svc in &host.services {
                 let port = *svc.port.get_ref();
                 let port_line = byte_offset_to_line(content, svc.port.span().start);
@@ -137,6 +149,15 @@ impl Config {
                         line: port_line,
                     });
                 }
+                if let Some(&first_line) = seen_services.get(svc.name.as_str()) {
+                    return Err(ConfigError::DuplicateServiceName {
+                        host: host.name.get_ref().clone(),
+                        service: svc.name.clone(),
+                        line: port_line,
+                        first_line,
+                    });
+                }
+                seen_services.insert(&svc.name, port_line);
             }
         }
         Ok(())
@@ -431,5 +452,26 @@ address = "10.0.0.2"
         assert!(msg.contains("abc-01234567890123456789"), "expected original name1 in error: {}", msg);
         assert!(msg.contains("abc-0123456789012345678X"), "expected original name2 in error: {}", msg);
         assert!(msg.contains("lines ~2 and ~6"), "expected line references in error: {}", msg);
+    }
+
+    #[test]
+    fn test_duplicate_service_name_fails() {
+        let toml = "[[hosts]]\nname = \"server\"\naddress = \"10.0.0.1\"\n\n[[hosts.services]]\nname = \"ssh\"\nport = 22\n\n[[hosts.services]]\nname = \"ssh\"\nport = 2222\n";
+        let file = write_temp_config(toml);
+        let result = Config::load(Some(file.path()));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("duplicate service name"), "expected 'duplicate service name' in error: {}", msg);
+        assert!(msg.contains("ssh"), "expected service name in error: {}", msg);
+    }
+
+    #[test]
+    fn test_hostname_slash_fails() {
+        let toml = "[[hosts]]\nname = \"a/b\"\naddress = \"10.0.0.1\"\n";
+        let file = write_temp_config(toml);
+        let result = Config::load(Some(file.path()));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("contains '/'"), "expected slash error in: {}", msg);
     }
 }
