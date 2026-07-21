@@ -1,5 +1,6 @@
 mod check;
 mod config;
+mod display;
 mod engine;
 
 use std::env;
@@ -19,36 +20,35 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
-            let _state = engine.shared_state();
-            let _host_order = engine.host_order();
+            let state = engine.shared_state();
+            let host_order = engine.host_order();
             let cancel = CancellationToken::new();
             let engine_cancel = cancel.clone();
+            let display_cancel = cancel.clone();
 
-            let mut engine_handle = tokio::spawn(async move {
+            let engine_handle = tokio::spawn(async move {
                 engine.run(engine_cancel).await
             });
 
-            // Display will be wired in story 1.5
-            // For now, hold the process alive and monitor engine health
-            loop {
-                tokio::select! {
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
-                    result = &mut engine_handle => {
-                        match result {
-                            Ok(Ok(())) => {
-                                eprintln!("Engine exited cleanly");
-                                break;
-                            }
-                            Ok(Err(e)) => {
-                                eprintln!("Engine error: {}", e);
-                                std::process::exit(1);
-                            }
-                            Err(e) => {
-                                eprintln!("Engine panicked: {}", e);
-                                std::process::exit(1);
-                            }
-                        }
+            let app = display::App::new(state, host_order);
+            let display_handle = tokio::spawn(async move {
+                display::run_display(app, display_cancel).await
+            });
+
+            tokio::select! {
+                result = engine_handle => {
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => eprintln!("Engine error: {}", e),
+                        Err(e) => eprintln!("Engine panicked: {}", e),
                     }
+                    cancel.cancel();
+                }
+                result = display_handle => {
+                    if let Err(e) = result {
+                        eprintln!("Display error: {:?}", e);
+                    }
+                    cancel.cancel();
                 }
             }
         }
