@@ -40,10 +40,17 @@ async fn main() {
             tokio::spawn(async move {
                 #[cfg(unix)]
                 {
-                    let mut term = tokio::signal::unix::signal(
+                    let mut term = match tokio::signal::unix::signal(
                         tokio::signal::unix::SignalKind::terminate(),
-                    )
-                    .expect("failed to register SIGTERM handler");
+                    ) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Warning: failed to register SIGTERM handler: {}", e);
+                            signal::ctrl_c().await.ok();
+                            signal_cancel.cancel();
+                            return;
+                        }
+                    };
                     tokio::select! {
                         _ = signal::ctrl_c() => {}
                         _ = term.recv() => {}
@@ -57,18 +64,38 @@ async fn main() {
 
             tokio::select! {
                 result = engine_handle => {
-                    match result {
-                        Ok(Ok(())) => {}
-                        Ok(Err(e)) => eprintln!("Engine error: {}", e),
-                        Err(e) => eprintln!("Engine panicked: {}", e),
-                    }
+                    let has_error = match result {
+                        Ok(Ok(())) => false,
+                        Ok(Err(e)) => {
+                            eprintln!("Engine error: {}", e);
+                            true
+                        }
+                        Err(e) => {
+                            eprintln!("Engine panicked: {}", e);
+                            true
+                        }
+                    };
                     cancel.cancel();
+                    if has_error {
+                        std::process::exit(1);
+                    }
                 }
                 result = display_handle => {
-                    if let Err(e) = result {
-                        eprintln!("Display error: {:?}", e);
-                    }
+                    let has_error = match result {
+                        Ok(Ok(())) => false,
+                        Ok(Err(e)) => {
+                            eprintln!("Display error: {}", e);
+                            true
+                        }
+                        Err(e) => {
+                            eprintln!("Display panicked: {}", e);
+                            true
+                        }
+                    };
                     cancel.cancel();
+                    if has_error {
+                        std::process::exit(1);
+                    }
                 }
             }
         }

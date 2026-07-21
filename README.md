@@ -9,11 +9,18 @@ Single Rust binary — no database, no web server, no configuration beyond a TOM
 ## Quick Start
 
 ```bash
-cargo install --path .
-tmonitor
+cargo run --release
 ```
 
 This monitors `127.0.0.1` with the default config. Press Ctrl+C to exit.
+
+To install the binary globally:
+
+```bash
+cargo install --path .
+# Ensure ~/.cargo/bin is on your PATH, or use:
+# ./target/release/tmonitor
+```
 
 ## Configuration
 
@@ -58,13 +65,13 @@ port = 22
 
 ### Prerequisites
 
-- Rust stable (MSRV 1.71+, latest recommended)
+- Rust stable (MSRV 1.71)
 - Cargo
 
 ### Linux (x86_64 and ARM)
 
 ```bash
-git clone <repo-url> tmonitor
+git clone https://github.com/jlundholm/tmonitor
 cd tmonitor
 cargo build --release
 ./target/release/tmonitor
@@ -73,7 +80,7 @@ cargo build --release
 ### macOS
 
 ```bash
-git clone <repo-url> tmonitor
+git clone https://github.com/jlundholm/tmonitor
 cd tmonitor
 cargo build --release
 ./target/release/tmonitor
@@ -88,15 +95,21 @@ The recommended approach is to compile on the Pi directly (ARM target):
 cargo build --release
 ```
 
-For cross-compilation from an x86 machine, install the appropriate target:
+For cross-compilation from an x86 machine, install the appropriate target and linker:
 
 ```bash
-rustup target add aarch64-unknown-linux-gnu   # Pi 3B+/4/5 (64-bit)
-# or
-rustup target add armv7-unknown-linux-gnueabihf  # Pi 2/3 (32-bit)
+# Pi 3B+/4/5 (64-bit)
+rustup target add aarch64-unknown-linux-gnu
 
-# Install linker
+# Pi 2/3 (32-bit)
+rustup target add armv7-unknown-linux-gnueabihf
+
+# Pi Zero/1 (ARMv6)
+rustup target add arm-unknown-linux-gnueabihf
+
+# Install linker and configure cargo
 sudo apt install gcc-aarch64-linux-gnu
+export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
 
 # Build
 cargo build --release --target aarch64-unknown-linux-gnu
@@ -105,17 +118,22 @@ cargo build --release --target aarch64-unknown-linux-gnu
 ## ICMP Requirements (Linux)
 
 ICMP ping requires permission to create raw datagram sockets.
-On most Linux systems, configure the ping group range:
+On most Linux systems, configure the ping group range for your user's group:
 
 ```bash
+# Replace 1000 with your user's GID (run: id -g)
+sudo sysctl -w net.ipv4.ping_group_range="1000 1000"
+```
+
+To make this persistent across reboots, create `/etc/sysctl.d/60-tmonitor.conf`:
+
+```
+net.ipv4.ping_group_range = 1000 1000
+```
+
+For a single-user system, you can also allow all groups:
+```
 sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
-```
-
-To make this persistent across reboots, add to `/etc/sysctl.conf`
-or create `/etc/sysctl.d/60-tmonitor.conf`:
-
-```
-net.ipv4.ping_group_range = 0 2147483647
 ```
 
 ## Resource Usage
@@ -137,7 +155,7 @@ On a Raspberry Pi 3 or later:
 
 ### Signal Handling
 
-- **SIGINT / SIGTERM** — restores terminal, cancels in-flight checks, exits cleanly
+- **SIGINT / SIGTERM** — restores terminal, cancels pending checks, exits cleanly
 - **Ctrl+C** — same as SIGINT
 - **Terminal resize** — layout recomputes automatically
 
