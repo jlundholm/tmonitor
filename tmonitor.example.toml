@@ -1,0 +1,29 @@
+# tmonitor.example.toml
+# Copy to tmonitor.toml and uncomment/adjust as needed.
+
+#interval_secs = 60
+#concurrency = 10
+
+#[[hosts]]
+#name = "router"
+#address = "192.168.1.1"
+#
+#[[hosts.services]]
+#name = "ssh"
+#port = 22
+#
+#[[hosts.services]]
+#name = "web"
+#port = 80
+
+#[[hosts]]
+#name = "server"
+#address = "10.0.0.10"
+
+#[[hosts]]
+#name = "dns"
+#address = "8.8.8.8"
+#
+#[[hosts.services]]
+#name = "dns-udp"
+#port = 53
