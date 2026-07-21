@@ -16,6 +16,19 @@
 #name = "web"
 #port = 80
 
+#[[hosts.services]]
+#name = "web-http"
+#port = 8080
+#type = "http"
+#path = "/health"
+
+#[[hosts.services]]
+#name = "web-https"
+#port = 443
+#type = "https"
+#path = "/api/status"
+#expected_status = 200
+
 #[[hosts]]
 #name = "server"
 #address = "10.0.0.10"

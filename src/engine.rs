@@ -139,14 +139,31 @@ impl Engine {
                         host: host.name.get_ref().clone(),
                         service: svc.name.clone(),
                     };
+                    let svc_type = svc.service_type.clone();
+                    let path = svc.path.clone().unwrap_or_else(|| "/".to_string());
+                    let expected_status = svc.expected_status;
                     let handle = tokio::spawn(async move {
                         let _permit = match guard.acquire().await {
                             Ok(p) => p,
                             Err(_) => return CheckResult::Down,
                         };
-                        check::check_port(&address, port, Duration::from_secs(5))
-                            .await
-                            .unwrap_or(CheckResult::Down)
+                        match svc_type.as_str() {
+                            "http" => {
+                                check::check_http(&address, port, &path, false, expected_status, Duration::from_secs(5))
+                                    .await
+                                    .unwrap_or(CheckResult::Down)
+                            }
+                            "https" => {
+                                check::check_http(&address, port, &path, true, expected_status, Duration::from_secs(5))
+                                    .await
+                                    .unwrap_or(CheckResult::Down)
+                            }
+                            _ => {
+                                check::check_port(&address, port, Duration::from_secs(5))
+                                    .await
+                                    .unwrap_or(CheckResult::Down)
+                            }
+                        }
                     });
                     handles.push((key, handle));
                 }
@@ -408,6 +425,9 @@ mod tests {
                 services: vec![ServiceConfig {
                     name: "ssh".to_string(),
                     port: Spanned::new(0..0, 22),
+                    service_type: "tcp".to_string(),
+                    path: None,
+                    expected_status: None,
                 }],
             }],
         };
@@ -469,10 +489,16 @@ mod tests {
                     ServiceConfig {
                         name: "ssh".to_string(),
                         port: Spanned::new(0..0, 22),
+                        service_type: "tcp".to_string(),
+                        path: None,
+                        expected_status: None,
                     },
                     ServiceConfig {
                         name: "web".to_string(),
                         port: Spanned::new(0..0, 80),
+                        service_type: "tcp".to_string(),
+                        path: None,
+                        expected_status: None,
                     },
                 ],
             }],

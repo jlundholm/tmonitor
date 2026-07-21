@@ -24,10 +24,16 @@ pub struct HostConfig {
     pub services: Vec<ServiceConfig>,
 }
 
+fn default_service_type() -> String { "tcp".to_string() }
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServiceConfig {
     pub name: String,
     pub port: Spanned<u32>,
+    #[serde(rename = "type", default = "default_service_type")]
+    pub service_type: String,
+    pub path: Option<String>,
+    pub expected_status: Option<u16>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -52,6 +58,12 @@ pub enum ConfigError {
     DuplicateServiceName { host: String, service: String, line: usize, first_line: usize },
     #[error("hostname '{name}' contains '/' which conflicts with service label format (line ~{line})")]
     HostnameSlash { name: String, line: usize },
+    #[error("host '{host}' service '{service}' has invalid service_type '{service_type}' (line ~{line}): expected 'tcp', 'http', or 'https'")]
+    InvalidServiceType { host: String, service: String, service_type: String, line: usize },
+    #[error("host '{host}' service '{service}' has invalid path '{path}' (line ~{line}): must start with '/'")]
+    InvalidServicePath { host: String, service: String, path: String, line: usize },
+    #[error("host '{host}' service '{service}' has invalid expected_status {status} (line ~{line}): must be 100-599")]
+    InvalidExpectedStatus { host: String, service: String, status: u16, line: usize },
 }
 
 fn byte_offset_to_line(content: &str, offset: usize) -> usize {
@@ -158,6 +170,40 @@ impl Config {
                     });
                 }
                 seen_services.insert(&svc.name, port_line);
+
+                match svc.service_type.as_str() {
+                    "tcp" | "http" | "https" => {}
+                    _ => {
+                        return Err(ConfigError::InvalidServiceType {
+                            host: host.name.get_ref().clone(),
+                            service: svc.name.clone(),
+                            service_type: svc.service_type.clone(),
+                            line: byte_offset_to_line(content, svc.port.span().start),
+                        });
+                    }
+                }
+
+                if let Some(ref path) = svc.path {
+                    if !path.starts_with('/') {
+                        return Err(ConfigError::InvalidServicePath {
+                            host: host.name.get_ref().clone(),
+                            service: svc.name.clone(),
+                            path: path.clone(),
+                            line: byte_offset_to_line(content, svc.port.span().start),
+                        });
+                    }
+                }
+
+                if let Some(status) = svc.expected_status {
+                    if status < 100 || status > 599 {
+                        return Err(ConfigError::InvalidExpectedStatus {
+                            host: host.name.get_ref().clone(),
+                            service: svc.name.clone(),
+                            status,
+                            line: byte_offset_to_line(content, svc.port.span().start),
+                        });
+                    }
+                }
             }
         }
         Ok(())
@@ -473,5 +519,153 @@ address = "10.0.0.2"
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("contains '/'"), "expected slash error in: {}", msg);
+    }
+
+    #[test]
+    fn test_http_service_type_accepted() {
+        let toml = r#"
+[[hosts]]
+name = "server"
+address = "10.0.0.1"
+
+[[hosts.services]]
+name = "web"
+port = 8080
+type = "http"
+path = "/health"
+expected_status = 200
+"#;
+        let file = write_temp_config(toml);
+        let config = Config::load(Some(file.path())).unwrap();
+        let svc = &config.hosts[0].services[0];
+        assert_eq!(svc.service_type, "http");
+        assert_eq!(svc.path.as_deref(), Some("/health"));
+        assert_eq!(svc.expected_status, Some(200));
+    }
+
+    #[test]
+    fn test_https_service_type_accepted() {
+        let toml = r#"
+[[hosts]]
+name = "server"
+address = "10.0.0.1"
+
+[[hosts.services]]
+name = "secure"
+port = 443
+type = "https"
+"#;
+        let file = write_temp_config(toml);
+        let config = Config::load(Some(file.path())).unwrap();
+        assert_eq!(config.hosts[0].services[0].service_type, "https");
+    }
+
+    #[test]
+    fn test_default_service_type_is_tcp() {
+        let toml = r#"
+[[hosts]]
+name = "server"
+address = "10.0.0.1"
+
+[[hosts.services]]
+name = "ssh"
+port = 22
+"#;
+        let file = write_temp_config(toml);
+        let config = Config::load(Some(file.path())).unwrap();
+        assert_eq!(config.hosts[0].services[0].service_type, "tcp");
+    }
+
+    #[test]
+    fn test_invalid_service_type_fails() {
+        let toml = r#"
+[[hosts]]
+name = "server"
+address = "10.0.0.1"
+
+[[hosts.services]]
+name = "bad"
+port = 80
+type = "udp"
+"#;
+        let file = write_temp_config(toml);
+        let result = Config::load(Some(file.path()));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid service_type"), "expected type error in: {}", msg);
+    }
+
+    #[test]
+    fn test_invalid_path_fails() {
+        let toml = r#"
+[[hosts]]
+name = "server"
+address = "10.0.0.1"
+
+[[hosts.services]]
+name = "web"
+port = 80
+type = "http"
+path = "health"
+"#;
+        let file = write_temp_config(toml);
+        let result = Config::load(Some(file.path()));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid path"), "expected path error in: {}", msg);
+    }
+
+    #[test]
+    fn test_invalid_expected_status_fails() {
+        let toml = r#"
+[[hosts]]
+name = "server"
+address = "10.0.0.1"
+
+[[hosts.services]]
+name = "web"
+port = 80
+type = "http"
+expected_status = 600
+"#;
+        let file = write_temp_config(toml);
+        let result = Config::load(Some(file.path()));
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid expected_status"), "expected status error in: {}", msg);
+    }
+
+    #[test]
+    fn test_http_path_defaults_to_none() {
+        let toml = r#"
+[[hosts]]
+name = "server"
+address = "10.0.0.1"
+
+[[hosts.services]]
+name = "web"
+port = 80
+type = "http"
+"#;
+        let file = write_temp_config(toml);
+        let config = Config::load(Some(file.path())).unwrap();
+        assert!(config.hosts[0].services[0].path.is_none());
+    }
+
+    #[test]
+    fn test_http_expected_status_defaults_to_none() {
+        let toml = r#"
+[[hosts]]
+name = "server"
+address = "10.0.0.1"
+
+[[hosts.services]]
+name = "web"
+port = 80
+type = "http"
+"#;
+        let file = write_temp_config(toml);
+        let config = Config::load(Some(file.path())).unwrap();
+        assert!(config.hosts[0].services[0].expected_status.is_none());
     }
 }

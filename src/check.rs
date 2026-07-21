@@ -18,6 +18,8 @@ pub enum CheckError {
     InvalidAddress(String),
     #[error("DNS lookup failed for {0}")]
     DnsLookupFailed(String),
+    #[error("HTTP error: {0}")]
+    Http(String),
 }
 
 pub async fn ping_host(address: &str) -> Result<CheckResult, CheckError> {
@@ -50,6 +52,57 @@ pub async fn check_port(
         Ok(Err(_)) => Ok(CheckResult::Down),
         Err(_) => Ok(CheckResult::Down),
     }
+}
+
+pub async fn check_http(
+    address: &str,
+    port: u16,
+    path: &str,
+    use_tls: bool,
+    expected_status: Option<u16>,
+    timeout: Duration,
+) -> Result<CheckResult, CheckError> {
+    let scheme = if use_tls { "https" } else { "http" };
+    let url = format!("{}://{}:{}{}", scheme, address, port, path);
+
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| CheckError::Http(e.to_string()))?;
+
+    match client.get(&url).send().await {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            match expected_status {
+                Some(expected) if status == expected => Ok(CheckResult::Up),
+                Some(_) => Ok(CheckResult::Down),
+                None if (200..400).contains(&status) => Ok(CheckResult::Up),
+                None => Ok(CheckResult::Down),
+            }
+        }
+        Err(e) => {
+            if e.is_timeout() {
+                Err(CheckError::Timeout(timeout))
+            } else if e.is_connect() {
+                Ok(CheckResult::Down)
+            } else if e.is_status() {
+                Ok(CheckResult::Down)
+            } else {
+                Ok(CheckResult::Down)
+            }
+        }
+    }
+}
+
+pub async fn check_https(
+    address: &str,
+    port: u16,
+    path: &str,
+    expected_status: Option<u16>,
+    timeout: Duration,
+) -> Result<CheckResult, CheckError> {
+    check_http(address, port, path, true, expected_status, timeout).await
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -180,5 +233,82 @@ mod tests {
         let result = ConcurrencyGuard::new(0);
         assert!(result.is_err());
         assert!(matches!(result, Err(ConcurrencyError::ZeroCapacity(0))));
+    }
+
+    async fn serve_http_response(status_line: &str, body: &str) -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let status = status_line.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let response = format!(
+                    "{}\r\nContent-Length: {}\r\nContent-Type: text/plain\r\n\r\n{}",
+                    status,
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn test_check_http_200_up() {
+        let port = serve_http_response("HTTP/1.1 200 OK", "ok").await;
+        let result = check_http("127.0.0.1", port, "/", false, None, Duration::from_secs(2)).await;
+        assert!(matches!(result, Ok(CheckResult::Up)));
+    }
+
+    #[tokio::test]
+    async fn test_check_http_404_down() {
+        let port = serve_http_response("HTTP/1.1 404 Not Found", "not found").await;
+        let result = check_http("127.0.0.1", port, "/", false, None, Duration::from_secs(2)).await;
+        assert!(matches!(result, Ok(CheckResult::Down)));
+    }
+
+    #[tokio::test]
+    async fn test_check_http_500_down() {
+        let port = serve_http_response("HTTP/1.1 500 Internal Server Error", "error").await;
+        let result = check_http("127.0.0.1", port, "/", false, None, Duration::from_secs(2)).await;
+        assert!(matches!(result, Ok(CheckResult::Down)));
+    }
+
+    #[tokio::test]
+    async fn test_check_http_expected_status_match() {
+        let port = serve_http_response("HTTP/1.1 200 OK", "ok").await;
+        let result = check_http("127.0.0.1", port, "/", false, Some(200), Duration::from_secs(2)).await;
+        assert!(matches!(result, Ok(CheckResult::Up)));
+    }
+
+    #[tokio::test]
+    async fn test_check_http_expected_status_mismatch() {
+        let port = serve_http_response("HTTP/1.1 301 Moved", "redirect").await;
+        let result = check_http("127.0.0.1", port, "/", false, Some(200), Duration::from_secs(2)).await;
+        assert!(matches!(result, Ok(CheckResult::Down)));
+    }
+
+    #[tokio::test]
+    async fn test_check_http_3xx_up_by_default() {
+        let port = serve_http_response("HTTP/1.1 301 Moved Permanently", "").await;
+        let result = check_http("127.0.0.1", port, "/", false, None, Duration::from_secs(2)).await;
+        assert!(matches!(result, Ok(CheckResult::Up)));
+    }
+
+    #[tokio::test]
+    async fn test_check_http_closed_port_down() {
+        let result = check_http("127.0.0.1", 1, "/", false, None, Duration::from_secs(2)).await;
+        assert!(matches!(result, Ok(CheckResult::Down)));
+    }
+
+    #[tokio::test]
+    async fn test_check_http_unreachable_down() {
+        let result = check_http("198.51.100.1", 80, "/", false, None, Duration::from_secs(2)).await;
+        assert!(
+            matches!(result, Ok(CheckResult::Down)) || result.is_err(),
+            "expected Down or error, got {:?}", result
+        );
     }
 }
