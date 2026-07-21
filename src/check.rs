@@ -30,9 +30,13 @@ pub async fn ping_host(address: &str) -> Result<CheckResult, CheckError> {
     let ident = PingIdentifier(0x1234);
     let mut pinger = client.pinger(addr, ident).await;
 
-    match pinger.ping(PingSequence(0), &[]).await {
-        Ok(_) => Ok(CheckResult::Up),
-        Err(_) => Ok(CheckResult::Down),
+    match tokio::time::timeout(Duration::from_secs(10), pinger.ping(PingSequence(0), &[])).await {
+        Ok(Ok(_)) => Ok(CheckResult::Up),
+        Ok(Err(_)) => Ok(CheckResult::Down),
+        Err(_) => {
+            eprintln!("[ping_host] {} timed out", address);
+            Ok(CheckResult::Down)
+        }
     }
 }
 
@@ -76,8 +80,8 @@ pub async fn check_http(
     let effective_client = if timeout != Duration::ZERO { &timeout_client } else { client };
 
     eprintln!("[check_http] url={} timeout={:?}", url, timeout);
-    match effective_client.get(&url).send().await {
-        Ok(response) => {
+    match tokio::time::timeout(timeout, effective_client.get(&url).send()).await {
+        Ok(Ok(response)) => {
             let status = response.status().as_u16();
             eprintln!("[check_http] url={} status={}", url, status);
             let _ = response.bytes().await;
@@ -88,13 +92,13 @@ pub async fn check_http(
                 None => Ok(CheckResult::Down),
             }
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             eprintln!("[check_http] url={} error={}", url, e);
-            if e.is_timeout() {
-                Ok(CheckResult::Down)
-            } else {
-                Ok(CheckResult::Down)
-            }
+            Ok(CheckResult::Down)
+        }
+        Err(_) => {
+            eprintln!("[check_http] url={} timed out after {:?}", url, timeout);
+            Ok(CheckResult::Down)
         }
     }
 }
