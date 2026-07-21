@@ -75,9 +75,11 @@ pub async fn check_http(
 
     let effective_client = if timeout != Duration::ZERO { &timeout_client } else { client };
 
+    eprintln!("[check_http] url={} timeout={:?}", url, timeout);
     match effective_client.get(&url).send().await {
         Ok(response) => {
             let status = response.status().as_u16();
+            eprintln!("[check_http] url={} status={}", url, status);
             let _ = response.bytes().await;
             match expected_status {
                 Some(expected) if status == expected => Ok(CheckResult::Up),
@@ -87,6 +89,7 @@ pub async fn check_http(
             }
         }
         Err(e) => {
+            eprintln!("[check_http] url={} error={}", url, e);
             if e.is_timeout() {
                 Ok(CheckResult::Down)
             } else {

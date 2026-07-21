@@ -142,6 +142,7 @@ impl Engine {
                         host: host.name.get_ref().clone(),
                         service: svc.name.clone(),
                     };
+                    let key_label = key.label();
                     let svc_type = svc.service_type.clone();
                     let path = svc.path.as_deref().filter(|p| !p.is_empty()).unwrap_or("/").to_string();
                     let expected_status = svc.expected_status;
@@ -153,11 +154,13 @@ impl Engine {
                         };
                         match svc_type.as_str() {
                             "http" => {
+                                eprintln!("[engine] check {} type=http addr={}:{}", key_label, address, port);
                                 check::check_http(&http_client, &address, port, &path, false, expected_status, Duration::from_secs(5))
                                     .await
                                     .unwrap_or(CheckResult::Down)
                             }
                             "https" => {
+                                eprintln!("[engine] check {} type=https addr={}:{}", key_label, address, port);
                                 check::check_http(&http_client, &address, port, &path, true, expected_status, Duration::from_secs(5))
                                     .await
                                     .unwrap_or(CheckResult::Down)
