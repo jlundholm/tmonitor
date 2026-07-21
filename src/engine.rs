@@ -8,7 +8,19 @@ use crate::check::{self, CheckResult, ConcurrencyGuard};
 use crate::config::Config;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct HostKey(pub String);
+pub enum CellKey {
+    Host(String),
+    Service { host: String, service: String },
+}
+
+impl CellKey {
+    pub fn label(&self) -> String {
+        match self {
+            CellKey::Host(name) => name.clone(),
+            CellKey::Service { host, service } => format!("{}/{}", host, service),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct HostState {
@@ -52,8 +64,8 @@ pub enum EngineError {
 
 pub struct Engine {
     config: Config,
-    state: Arc<RwLock<HashMap<HostKey, HostState>>>,
-    host_order: Vec<HostKey>,
+    state: Arc<RwLock<HashMap<CellKey, HostState>>>,
+    cell_order: Vec<CellKey>,
     guard: ConcurrencyGuard,
 }
 
@@ -61,28 +73,37 @@ impl Engine {
     pub fn new(config: Config) -> Result<Self, EngineError> {
         let guard = ConcurrencyGuard::new(config.concurrency)?;
         let mut state_map = HashMap::new();
-        let mut host_order = Vec::new();
+        let mut cell_order = Vec::new();
 
         for host in &config.hosts {
-            let key = HostKey(host.name.get_ref().clone());
+            let key = CellKey::Host(host.name.get_ref().clone());
             state_map.insert(key.clone(), HostState::new());
-            host_order.push(key);
+            cell_order.push(key);
+
+            for svc in &host.services {
+                let key = CellKey::Service {
+                    host: host.name.get_ref().clone(),
+                    service: svc.name.clone(),
+                };
+                state_map.insert(key.clone(), HostState::new());
+                cell_order.push(key);
+            }
         }
 
         Ok(Engine {
             config,
             state: Arc::new(RwLock::new(state_map)),
-            host_order,
+            cell_order,
             guard,
         })
     }
 
-    pub fn shared_state(&self) -> Arc<RwLock<HashMap<HostKey, HostState>>> {
+    pub fn shared_state(&self) -> Arc<RwLock<HashMap<CellKey, HostState>>> {
         self.state.clone()
     }
 
-    pub fn host_order(&self) -> Vec<HostKey> {
-        self.host_order.clone()
+    pub fn cell_order(&self) -> Vec<CellKey> {
+        self.cell_order.clone()
     }
 
     pub async fn run(&self, cancel: CancellationToken) -> Result<(), EngineError> {
@@ -92,13 +113,13 @@ impl Engine {
             }
             let cycle_start = Instant::now();
 
-            let mut handles: Vec<(String, tokio::task::JoinHandle<CheckResult>)> = Vec::new();
+            let mut handles: Vec<(CellKey, tokio::task::JoinHandle<CheckResult>)> = Vec::new();
 
             for host in &self.config.hosts {
                 {
                     let guard = self.guard.clone();
                     let address = host.address.clone();
-                    let host_name = host.name.get_ref().clone();
+                    let key = CellKey::Host(host.name.get_ref().clone());
                     let handle = tokio::spawn(async move {
                         let _permit = match guard.acquire().await {
                             Ok(p) => p,
@@ -108,13 +129,16 @@ impl Engine {
                             .await
                             .unwrap_or(CheckResult::Down)
                     });
-                    handles.push((host_name, handle));
+                    handles.push((key, handle));
                 }
                 for svc in &host.services {
                     let guard = self.guard.clone();
                     let address = host.address.clone();
                     let port = *svc.port.get_ref() as u16;
-                    let host_name = host.name.get_ref().clone();
+                    let key = CellKey::Service {
+                        host: host.name.get_ref().clone(),
+                        service: svc.name.clone(),
+                    };
                     let handle = tokio::spawn(async move {
                         let _permit = match guard.acquire().await {
                             Ok(p) => p,
@@ -124,37 +148,34 @@ impl Engine {
                             .await
                             .unwrap_or(CheckResult::Down)
                     });
-                    handles.push((host_name, handle));
+                    handles.push((key, handle));
                 }
             }
 
-            let mut results: HashMap<String, CheckResult> = HashMap::new();
-            for (host_name, handle) in handles {
+            let mut results: HashMap<CellKey, CheckResult> = HashMap::new();
+            for (cell_key, handle) in handles {
                 let result = match handle.await {
                     Ok(r) => r,
                     Err(_) => CheckResult::Down,
                 };
-                let entry = results.entry(host_name).or_insert(CheckResult::Up);
-                if result == CheckResult::Down {
-                    *entry = CheckResult::Down;
-                }
+                results.insert(cell_key, result);
             }
 
             let mut state = self.state.write().await;
-            for host_key in &self.host_order {
-                if let Some(result) = results.get(&host_key.0) {
-                    if let Some(host_state) = state.get_mut(host_key) {
-                        if *result != host_state.status {
+            for cell_key in &self.cell_order {
+                if let Some(result) = results.get(cell_key) {
+                    if let Some(cell_state) = state.get_mut(cell_key) {
+                        if *result != cell_state.status {
                             let now = Instant::now();
-                            host_state.status = *result;
+                            cell_state.status = *result;
                             match *result {
                                 CheckResult::Up => {
-                                    host_state.down_since = None;
-                                    host_state.up_since = Some(now);
+                                    cell_state.down_since = None;
+                                    cell_state.up_since = Some(now);
                                 }
                                 CheckResult::Down => {
-                                    host_state.up_since = None;
-                                    host_state.down_since = Some(now);
+                                    cell_state.up_since = None;
+                                    cell_state.down_since = Some(now);
                                 }
                             }
                         }
@@ -262,17 +283,20 @@ mod tests {
     fn test_engine_new_initializes_state() {
         let config = test_config();
         let engine = Engine::new(config).unwrap();
-        assert_eq!(engine.host_order.len(), 1);
-        assert_eq!(engine.host_order[0].0, "localhost");
+        assert_eq!(engine.cell_order.len(), 1);
+        assert_eq!(
+            engine.cell_order[0],
+            CellKey::Host("localhost".to_string())
+        );
         assert_eq!(engine.guard.available_permits(), 10);
     }
 
     #[tokio::test]
-    async fn test_engine_shared_state_and_host_order() {
+    async fn test_engine_shared_state_and_cell_order() {
         let config = test_config();
         let engine = Engine::new(config).unwrap();
         let shared = engine.shared_state();
-        let order = engine.host_order();
+        let order = engine.cell_order();
         assert_eq!(order.len(), 1);
         let guard = shared.read().await;
         assert!(guard.contains_key(&order[0]));
@@ -286,7 +310,7 @@ mod tests {
             hosts: vec![],
         };
         let engine = Engine::new(config).unwrap();
-        assert!(engine.host_order.is_empty());
+        assert!(engine.cell_order.is_empty());
         let guard = engine.state.read().await;
         assert!(guard.is_empty());
     }
@@ -310,8 +334,8 @@ mod tests {
             ],
         };
         let engine = Engine::new(config).unwrap();
-        assert_eq!(engine.host_order[0].0, "beta");
-        assert_eq!(engine.host_order[1].0, "alpha");
+        assert_eq!(engine.cell_order[0], CellKey::Host("beta".to_string()));
+        assert_eq!(engine.cell_order[1], CellKey::Host("alpha".to_string()));
     }
 
     #[tokio::test]
@@ -339,8 +363,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let guard = state.read().await;
-        let host_state = guard.get(&HostKey("localhost".to_string())).unwrap();
-        assert!(host_state.up_since.is_some() || host_state.down_since.is_some());
+        let cell_key = CellKey::Host("localhost".to_string());
+        let cell_state = guard.get(&cell_key).unwrap();
+        assert!(cell_state.up_since.is_some() || cell_state.down_since.is_some());
     }
 
     #[tokio::test]
@@ -373,7 +398,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_engine_services_host_determines_status() {
+    async fn test_engine_host_and_service_independent() {
         let config = Config {
             interval_secs: 1,
             concurrency: 10,
@@ -400,7 +425,74 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let guard = state.read().await;
-        let host_state = guard.get(&HostKey("test-host".to_string())).unwrap();
+
+        let host_key = CellKey::Host("test-host".to_string());
+        let svc_key = CellKey::Service {
+            host: "test-host".to_string(),
+            service: "ssh".to_string(),
+        };
+
+        assert!(guard.contains_key(&host_key));
+        assert!(guard.contains_key(&svc_key));
+
+        let host_state = guard.get(&host_key).unwrap();
+        let svc_state = guard.get(&svc_key).unwrap();
         assert!(host_state.up_since.is_some() || host_state.down_since.is_some());
+        assert!(svc_state.up_since.is_some() || svc_state.down_since.is_some());
+    }
+
+    #[test]
+    fn test_cell_key_label() {
+        assert_eq!(
+            CellKey::Host("router".to_string()).label(),
+            "router"
+        );
+        assert_eq!(
+            CellKey::Service {
+                host: "router".to_string(),
+                service: "ssh".to_string()
+            }
+            .label(),
+            "router/ssh"
+        );
+    }
+
+    #[test]
+    fn test_engine_cell_order_includes_services() {
+        let config = Config {
+            interval_secs: 60,
+            concurrency: 5,
+            hosts: vec![HostConfig {
+                name: Spanned::new(0..0, "server".to_string()),
+                address: "10.0.0.1".to_string(),
+                services: vec![
+                    ServiceConfig {
+                        name: "ssh".to_string(),
+                        port: Spanned::new(0..0, 22),
+                    },
+                    ServiceConfig {
+                        name: "web".to_string(),
+                        port: Spanned::new(0..0, 80),
+                    },
+                ],
+            }],
+        };
+        let engine = Engine::new(config).unwrap();
+        assert_eq!(engine.cell_order.len(), 3);
+        assert_eq!(engine.cell_order[0], CellKey::Host("server".to_string()));
+        assert_eq!(
+            engine.cell_order[1],
+            CellKey::Service {
+                host: "server".to_string(),
+                service: "ssh".to_string()
+            }
+        );
+        assert_eq!(
+            engine.cell_order[2],
+            CellKey::Service {
+                host: "server".to_string(),
+                service: "web".to_string()
+            }
+        );
     }
 }

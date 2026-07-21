@@ -22,7 +22,7 @@ async fn main() {
                 }
             };
             let state = engine.shared_state();
-            let host_order = engine.host_order();
+            let cell_order = engine.cell_order();
             let cancel = CancellationToken::new();
             let engine_cancel = cancel.clone();
             let display_cancel = cancel.clone();
@@ -31,7 +31,7 @@ async fn main() {
                 engine.run(engine_cancel).await
             });
 
-            let app = display::App::new(state, host_order);
+            let app = display::App::new(state, cell_order);
             let display_handle = tokio::spawn(async move {
                 display::run_display(app, display_cancel).await
             });

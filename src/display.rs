@@ -13,7 +13,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 use tokio::sync::RwLock;
 
-use crate::engine::{HostKey, HostState};
+use crate::engine::{CellKey, HostState};
 
 const COLOR_UP: Color = Color::Rgb(0x00, 0xFF, 0x00);
 const COLOR_DOWN: Color = Color::Rgb(0xFF, 0x00, 0x00);
@@ -36,25 +36,25 @@ impl Drop for TerminalGuard {
 }
 
 pub struct App {
-    state: Arc<RwLock<HashMap<HostKey, HostState>>>,
-    host_order: Vec<HostKey>,
+    state: Arc<RwLock<HashMap<CellKey, HostState>>>,
+    cell_order: Vec<CellKey>,
 }
 
 impl App {
     pub fn new(
-        state: Arc<RwLock<HashMap<HostKey, HostState>>>,
-        host_order: Vec<HostKey>,
+        state: Arc<RwLock<HashMap<CellKey, HostState>>>,
+        cell_order: Vec<CellKey>,
     ) -> Self {
-        App { state, host_order }
+        App { state, cell_order }
     }
 }
 
 impl App {
     fn render(&self, frame: &mut Frame) {
         let area = frame.area();
-        let host_count = self.host_order.len();
+        let cell_count = self.cell_order.len();
 
-        let (columns, max_rows, cell_width) = compute_layout((area.width, area.height), host_count);
+        let (columns, max_rows, cell_width) = compute_layout((area.width, area.height), cell_count);
 
         let chunks = Layout::vertical([
             Constraint::Length(1),
@@ -65,7 +65,7 @@ impl App {
 
         render_top_bar(frame, chunks[0]);
 
-        if host_count == 0 {
+        if cell_count == 0 {
             return;
         }
 
@@ -88,37 +88,37 @@ impl App {
 
             for row in 0..max_rows {
                 let idx = col * max_rows + row;
-                if idx >= host_count {
+                if idx >= cell_count {
                     break;
                 }
-                let host_key = &self.host_order[idx];
-                let host_state = state_map.get(host_key);
+                let cell_key = &self.cell_order[idx];
+                let cell_state = state_map.get(cell_key);
                 let cell_y = grid_area.y + (row * 2) as u16;
                 let cell_rect = Rect::new(col_x, cell_y, actual_cell_width as u16, 1);
 
-                let (label, status_color) = match host_state {
-                    Some(hs) => match hs.status {
+                let (label, status_color) = match cell_state {
+                    Some(cs) => match cs.status {
                         crate::check::CheckResult::Up => ("Up", COLOR_UP),
                         crate::check::CheckResult::Down => ("Down", COLOR_DOWN),
                     },
                     None => ("?", COLOR_DIM),
                 };
 
-                let hostname = &host_key.0;
+                let cell_label = cell_key.label();
 
                 if cell_width >= 22 {
-                    let duration_str = match host_state {
-                        Some(hs) => match hs.status {
-                            crate::check::CheckResult::Up => format_duration(hs.uptime_duration()),
+                    let duration_str = match cell_state {
+                        Some(cs) => match cs.status {
+                            crate::check::CheckResult::Up => format_duration(cs.uptime_duration()),
                             crate::check::CheckResult::Down => {
-                                format_duration(hs.downtime_duration())
+                                format_duration(cs.downtime_duration())
                             }
                         },
                         None => String::new(),
                     };
                     let line = Line::from(vec![
                         ratatui::text::Span::styled(
-                            format!("{}  {}", hostname, label),
+                            format!("{}  {}", cell_label, label),
                             Style::default().fg(status_color),
                         ),
                         ratatui::text::Span::styled(
@@ -129,13 +129,13 @@ impl App {
                     let paragraph = Paragraph::new(line).wrap(Wrap { trim: false });
                     frame.render_widget(paragraph, cell_rect);
                 } else if cell_width >= 15 {
-                    let cell_text = format!("{}  {}", hostname, label);
+                    let cell_text = format!("{}  {}", cell_label, label);
                     let paragraph = Paragraph::new(cell_text)
                         .style(Style::default().fg(status_color))
                         .wrap(Wrap { trim: false });
                     frame.render_widget(paragraph, cell_rect);
                 } else {
-                    let cell_text = truncated_hostname(hostname, cell_width);
+                    let cell_text = truncated_hostname(&cell_label, cell_width);
                     let paragraph = Paragraph::new(cell_text)
                         .style(Style::default().fg(status_color))
                         .wrap(Wrap { trim: false });
