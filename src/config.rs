@@ -16,10 +16,6 @@ pub struct Config {
 fn default_interval() -> u64 { 60 }
 fn default_concurrency() -> usize { 10 }
 
-fn default_port() -> Spanned<u32> {
-    Spanned::new(0..0, 0)
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct HostConfig {
     pub name: Spanned<String>,
@@ -31,7 +27,6 @@ pub struct HostConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServiceConfig {
     pub name: String,
-    #[serde(default = "default_port")]
     pub port: Spanned<u32>,
 }
 
@@ -75,8 +70,9 @@ impl Config {
                 let content = fs::read_to_string(p)?;
                 let mut config: Config = toml::from_str(&content)?;
                 config.validate(&content)?;
+                let original_names: Vec<String> = config.hosts.iter().map(|h| h.name.get_ref().clone()).collect();
                 truncate_hostnames(&mut config);
-                config.validate_truncation_collisions(&content)?;
+                config.validate_truncation_collisions(&content, &original_names)?;
                 Ok(config)
             }
             None => {
@@ -146,13 +142,13 @@ impl Config {
         Ok(())
     }
 
-    fn validate_truncation_collisions(&self, content: &str) -> Result<(), ConfigError> {
+    fn validate_truncation_collisions(&self, content: &str, original_names: &[String]) -> Result<(), ConfigError> {
         for i in 0..self.hosts.len() {
             for j in (i + 1)..self.hosts.len() {
                 if self.hosts[i].name.get_ref() == self.hosts[j].name.get_ref() {
                     return Err(ConfigError::TruncationCollision {
-                        name1: self.hosts[i].name.get_ref().clone(),
-                        name2: self.hosts[j].name.get_ref().clone(),
+                        name1: original_names[i].clone(),
+                        name2: original_names[j].clone(),
                         line1: byte_offset_to_line(content, self.hosts[i].name.span().start),
                         line2: byte_offset_to_line(content, self.hosts[j].name.span().start),
                     });
@@ -421,6 +417,7 @@ address = "10.0.0.2"
         let result = Config::load(Some(file.path()));
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("line ~7"), "expected line ~7 in error: {}", msg);
         assert!(msg.contains("invalid port"), "expected 'invalid port' in error: {}", msg);
     }
 
@@ -430,9 +427,9 @@ address = "10.0.0.2"
         let file = write_temp_config(toml);
         let result = Config::load(Some(file.path()));
         assert!(result.is_err());
-        match result.unwrap_err() {
-            ConfigError::TruncationCollision { .. } => {}
-            e => panic!("expected TruncationCollision, got: {:?}", e),
-        }
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("abc-01234567890123456789"), "expected original name1 in error: {}", msg);
+        assert!(msg.contains("abc-0123456789012345678X"), "expected original name2 in error: {}", msg);
+        assert!(msg.contains("lines ~2 and ~6"), "expected line references in error: {}", msg);
     }
 }
