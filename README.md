@@ -115,6 +115,28 @@ export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
 cargo build --release --target aarch64-unknown-linux-gnu
 ```
 
+## Troubleshooting
+
+### Distro Rust is too old
+
+```
+error: lock file version 4 found but this version of cargo does not understand this lock file
+```
+
+The `apt install rustc cargo` packages are too old (Cargo 1.65). Install Rust via [rustup](https://rustup.rs) instead:
+
+```bash
+sudo apt remove rustc cargo
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+```
+
+Then verify:
+```bash
+rustc --version   # should be 1.71+
+cargo build --release
+```
+
 ## ICMP Requirements (Linux)
 
 ICMP ping requires permission to create raw datagram sockets.
