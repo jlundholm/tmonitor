@@ -58,8 +58,8 @@ impl Default for HostState {
 pub enum EngineError {
     #[error("concurrency error: {0}")]
     Concurrency(#[from] check::ConcurrencyError),
-    #[error("engine stopped")]
-    Cancelled,
+    #[error("check error: {0}")]
+    Check(#[from] check::CheckError),
 }
 
 pub struct Engine {
@@ -67,11 +67,13 @@ pub struct Engine {
     state: Arc<RwLock<HashMap<CellKey, HostState>>>,
     cell_order: Vec<CellKey>,
     guard: ConcurrencyGuard,
+    http_client: reqwest::Client,
 }
 
 impl Engine {
     pub fn new(config: Config) -> Result<Self, EngineError> {
         let guard = ConcurrencyGuard::new(config.concurrency)?;
+        let http_client = check::build_http_client(Duration::from_secs(5))?;
         let mut state_map = HashMap::new();
         let mut cell_order = Vec::new();
 
@@ -95,6 +97,7 @@ impl Engine {
             state: Arc::new(RwLock::new(state_map)),
             cell_order,
             guard,
+            http_client,
         })
     }
 
@@ -140,8 +143,9 @@ impl Engine {
                         service: svc.name.clone(),
                     };
                     let svc_type = svc.service_type.clone();
-                    let path = svc.path.clone().unwrap_or_else(|| "/".to_string());
+                    let path = svc.path.as_deref().filter(|p| !p.is_empty()).unwrap_or("/").to_string();
                     let expected_status = svc.expected_status;
+                    let http_client = self.http_client.clone();
                     let handle = tokio::spawn(async move {
                         let _permit = match guard.acquire().await {
                             Ok(p) => p,
@@ -149,12 +153,12 @@ impl Engine {
                         };
                         match svc_type.as_str() {
                             "http" => {
-                                check::check_http(&address, port, &path, false, expected_status, Duration::from_secs(5))
+                                check::check_http(&http_client, &address, port, &path, false, expected_status, Duration::from_secs(5))
                                     .await
                                     .unwrap_or(CheckResult::Down)
                             }
                             "https" => {
-                                check::check_http(&address, port, &path, true, expected_status, Duration::from_secs(5))
+                                check::check_http(&http_client, &address, port, &path, true, expected_status, Duration::from_secs(5))
                                     .await
                                     .unwrap_or(CheckResult::Down)
                             }
