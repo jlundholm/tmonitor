@@ -5,6 +5,7 @@ mod engine;
 
 use std::env;
 use std::path::PathBuf;
+use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main(flavor = "current_thread")]
@@ -33,6 +34,25 @@ async fn main() {
             let app = display::App::new(state, host_order);
             let display_handle = tokio::spawn(async move {
                 display::run_display(app, display_cancel).await
+            });
+
+            let signal_cancel = cancel.clone();
+            tokio::spawn(async move {
+                #[cfg(unix)]
+                {
+                    let mut term = tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::terminate(),
+                    )
+                    .expect("failed to register SIGTERM handler");
+                    tokio::select! {
+                        _ = signal::ctrl_c() => {}
+                        _ = term.recv() => {}
+                    }
+                }
+                #[cfg(not(unix))]
+                signal::ctrl_c().await.ok();
+
+                signal_cancel.cancel();
             });
 
             tokio::select! {
