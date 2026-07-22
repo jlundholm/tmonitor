@@ -73,7 +73,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(config: Config) -> Result<Self, EngineError> {
         let guard = ConcurrencyGuard::new(config.concurrency)?;
-        let http_client = check::build_http_client(Duration::from_secs(5))?;
+        let http_client = check::build_http_client(Duration::from_secs(5), true)?;
         let mut state_map = HashMap::new();
         let mut cell_order = Vec::new();
 
@@ -146,7 +146,6 @@ impl Engine {
                     let svc_type = svc.service_type.clone();
                     let path = svc.path.as_deref().filter(|p| !p.is_empty()).unwrap_or("/").to_string();
                     let expected_status = svc.expected_status;
-                    let danger_accept_invalid_certs = svc.danger_accept_invalid_certs;
                     let http_client = self.http_client.clone();
                     let handle = tokio::spawn(async move {
                         let _permit = match guard.acquire().await {
@@ -156,13 +155,13 @@ impl Engine {
                         match svc_type.as_str() {
                             "http" => {
                                 log::info!("check {} type=http addr={}:{}", key_label, address, port);
-                                check::check_http(&http_client, &address, port, &path, false, expected_status, Duration::from_secs(5), danger_accept_invalid_certs)
+                                check::check_http(&http_client, &address, port, &path, false, expected_status, Duration::from_secs(5))
                                     .await
                                     .unwrap_or(CheckResult::Down)
                             }
                             "https" => {
                                 log::info!("check {} type=https addr={}:{}", key_label, address, port);
-                                check::check_http(&http_client, &address, port, &path, true, expected_status, Duration::from_secs(5), danger_accept_invalid_certs)
+                                check::check_http(&http_client, &address, port, &path, true, expected_status, Duration::from_secs(5))
                                     .await
                                     .unwrap_or(CheckResult::Down)
                             }

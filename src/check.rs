@@ -68,7 +68,6 @@ pub async fn check_http(
     use_tls: bool,
     expected_status: Option<u16>,
     timeout: Duration,
-    danger_accept_invalid_certs: bool,
 ) -> Result<CheckResult, CheckError> {
     let scheme = if use_tls { "https" } else { "http" };
     let host = if address.contains(':') && !address.starts_with('[') {
@@ -78,20 +77,8 @@ pub async fn check_http(
     };
     let url = format!("{}://{}:{}{}", scheme, host, port, path);
 
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::limited(5));
-    if danger_accept_invalid_certs {
-        client_builder = client_builder.danger_accept_invalid_certs(true);
-    }
-    let timeout_client = client_builder
-        .build()
-        .map_err(|e| CheckError::Http(e.to_string()))?;
-
-    let effective_client = if timeout != Duration::ZERO { &timeout_client } else { client };
-
     log::debug!("[check_http] url={} timeout={:?}", url, timeout);
-    match tokio::time::timeout(timeout, effective_client.get(&url).send()).await {
+    match tokio::time::timeout(timeout, client.get(&url).send()).await {
         Ok(Ok(response)) => {
             let status = response.status().as_u16();
             log::debug!("[check_http] url={} status={}", url, status);
@@ -114,10 +101,14 @@ pub async fn check_http(
     }
 }
 
-pub fn build_http_client(timeout: Duration) -> Result<reqwest::Client, CheckError> {
-    reqwest::Client::builder()
+pub fn build_http_client(timeout: Duration, danger_accept_invalid_certs: bool) -> Result<reqwest::Client, CheckError> {
+    let mut builder = reqwest::Client::builder()
         .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::limited(5));
+    if danger_accept_invalid_certs {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+    builder
         .build()
         .map_err(|e| CheckError::Http(e.to_string()))
 }
@@ -129,9 +120,8 @@ pub async fn check_https(
     path: &str,
     expected_status: Option<u16>,
     timeout: Duration,
-    danger_accept_invalid_certs: bool,
 ) -> Result<CheckResult, CheckError> {
-    check_http(client, address, port, path, true, expected_status, timeout, danger_accept_invalid_certs).await
+    check_http(client, address, port, path, true, expected_status, timeout).await
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -286,63 +276,63 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_http_200_up() {
-        let client = build_http_client(Duration::from_secs(2)).unwrap();
+        let client = build_http_client(Duration::from_secs(2), false).unwrap();
         let port = serve_http_response("HTTP/1.1 200 OK", "ok").await;
-        let result = check_http(&client, "127.0.0.1", port, "/", false, None, Duration::from_secs(2), false).await;
+        let result = check_http(&client, "127.0.0.1", port, "/", false, None, Duration::from_secs(2)).await;
         assert!(matches!(result, Ok(CheckResult::Up)));
     }
 
     #[tokio::test]
     async fn test_check_http_404_down() {
-        let client = build_http_client(Duration::from_secs(2)).unwrap();
+        let client = build_http_client(Duration::from_secs(2), false).unwrap();
         let port = serve_http_response("HTTP/1.1 404 Not Found", "not found").await;
-        let result = check_http(&client, "127.0.0.1", port, "/", false, None, Duration::from_secs(2), false).await;
+        let result = check_http(&client, "127.0.0.1", port, "/", false, None, Duration::from_secs(2)).await;
         assert!(matches!(result, Ok(CheckResult::Down)));
     }
 
     #[tokio::test]
     async fn test_check_http_500_down() {
-        let client = build_http_client(Duration::from_secs(2)).unwrap();
+        let client = build_http_client(Duration::from_secs(2), false).unwrap();
         let port = serve_http_response("HTTP/1.1 500 Internal Server Error", "error").await;
-        let result = check_http(&client, "127.0.0.1", port, "/", false, None, Duration::from_secs(2), false).await;
+        let result = check_http(&client, "127.0.0.1", port, "/", false, None, Duration::from_secs(2)).await;
         assert!(matches!(result, Ok(CheckResult::Down)));
     }
 
     #[tokio::test]
     async fn test_check_http_expected_status_match() {
-        let client = build_http_client(Duration::from_secs(2)).unwrap();
+        let client = build_http_client(Duration::from_secs(2), false).unwrap();
         let port = serve_http_response("HTTP/1.1 200 OK", "ok").await;
-        let result = check_http(&client, "127.0.0.1", port, "/", false, Some(200), Duration::from_secs(2), false).await;
+        let result = check_http(&client, "127.0.0.1", port, "/", false, Some(200), Duration::from_secs(2)).await;
         assert!(matches!(result, Ok(CheckResult::Up)));
     }
 
     #[tokio::test]
     async fn test_check_http_expected_status_mismatch() {
-        let client = build_http_client(Duration::from_secs(2)).unwrap();
+        let client = build_http_client(Duration::from_secs(2), false).unwrap();
         let port = serve_http_response("HTTP/1.1 301 Moved", "redirect").await;
-        let result = check_http(&client, "127.0.0.1", port, "/", false, Some(200), Duration::from_secs(2), false).await;
+        let result = check_http(&client, "127.0.0.1", port, "/", false, Some(200), Duration::from_secs(2)).await;
         assert!(matches!(result, Ok(CheckResult::Down)));
     }
 
     #[tokio::test]
     async fn test_check_http_3xx_up_by_default() {
-        let client = build_http_client(Duration::from_secs(2)).unwrap();
+        let client = build_http_client(Duration::from_secs(2), false).unwrap();
         let port = serve_http_response("HTTP/1.1 301 Moved Permanently", "").await;
-        let result = check_http(&client, "127.0.0.1", port, "/", false, None, Duration::from_secs(2), false).await;
+        let result = check_http(&client, "127.0.0.1", port, "/", false, None, Duration::from_secs(2)).await;
         assert!(matches!(result, Ok(CheckResult::Up)));
     }
 
     #[tokio::test]
     async fn test_check_http_closed_port_down() {
-        let client = build_http_client(Duration::from_secs(2)).unwrap();
-        let result = check_http(&client, "127.0.0.1", 1, "/", false, None, Duration::from_secs(2), false).await;
+        let client = build_http_client(Duration::from_secs(2), false).unwrap();
+        let result = check_http(&client, "127.0.0.1", 1, "/", false, None, Duration::from_secs(2)).await;
         assert!(matches!(result, Ok(CheckResult::Down)));
     }
 
     #[tokio::test]
     async fn test_check_http_unreachable_down() {
-        let client = build_http_client(Duration::from_secs(2)).unwrap();
-        let result = check_http(&client, "198.51.100.1", 80, "/", false, None, Duration::from_secs(2), false).await;
+        let client = build_http_client(Duration::from_secs(2), false).unwrap();
+        let result = check_http(&client, "198.51.100.1", 80, "/", false, None, Duration::from_secs(2)).await;
         assert!(
             matches!(result, Ok(CheckResult::Down)) || result.is_err(),
             "expected Down or error, got {:?}", result
