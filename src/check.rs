@@ -79,17 +79,25 @@ pub async fn check_http(
 
     log::debug!("[check_http] url={} timeout={:?}", url, timeout);
     
-    // Wrap the entire request (send + body read) in the timeout
+    // Create request with explicit timeout on the request itself
+    let request = client.get(&url).timeout(timeout);
+    
+    // Also wrap in tokio timeout as double protection
     let result = tokio::time::timeout(timeout, async {
-        let response = client.get(&url).send().await?;
+        log::debug!("[check_http] sending request for url={}", url);
+        let response = request.send().await?;
+        log::debug!("[check_http] response received for url={}", url);
         let status = response.status().as_u16();
         log::debug!("[check_http] url={} status={}", url, status);
+        log::debug!("[check_http] reading response body for url={}", url);
         let _ = response.bytes().await;
+        log::debug!("[check_http] body read complete for url={}", url);
         Ok::<u16, reqwest::Error>(status)
     }).await;
     
     match result {
         Ok(Ok(status)) => {
+            log::debug!("[check_http] url={} completed successfully with status={}", url, status);
             match expected_status {
                 Some(expected) if status == expected => Ok(CheckResult::Up),
                 Some(_) => Ok(CheckResult::Down),
@@ -111,9 +119,12 @@ pub async fn check_http(
 pub fn build_http_client(timeout: Duration, danger_accept_invalid_certs: bool) -> Result<reqwest::Client, CheckError> {
     let mut builder = reqwest::Client::builder()
         .no_proxy()
+        .tcp_keepalive(Some(Duration::from_secs(2)))
         .connect_timeout(timeout)
         .timeout(timeout)
         .pool_max_idle_per_host(0)
+        .pool_idle_timeout(Duration::from_secs(0))
+        .http1_only()
         .redirect(reqwest::redirect::Policy::limited(5));
     if danger_accept_invalid_certs {
         builder = builder.danger_accept_invalid_certs(true);
