@@ -146,6 +146,7 @@ impl Engine {
                     let svc_type = svc.service_type.clone();
                     let path = svc.path.as_deref().filter(|p| !p.is_empty()).unwrap_or("/").to_string();
                     let expected_status = svc.expected_status;
+                    let hostname_override = svc.hostname.clone();
                     let http_client = self.http_client.clone();
                     let handle = tokio::spawn(async move {
                         let _permit = match guard.acquire().await {
@@ -155,13 +156,13 @@ impl Engine {
                         match svc_type.as_str() {
                             "http" => {
                                 log::info!("check {} type=http addr={}:{}", key_label, address, port);
-                                check::check_http(&http_client, &address, port, &path, false, expected_status, Duration::from_secs(5))
+                                check::check_http(&http_client, &address, port, &path, false, expected_status, Duration::from_secs(5), hostname_override.as_deref())
                                     .await
                                     .unwrap_or(CheckResult::Down)
                             }
                             "https" => {
                                 log::info!("check {} type=https addr={}:{}", key_label, address, port);
-                                check::check_http(&http_client, &address, port, &path, true, expected_status, Duration::from_secs(5))
+                                check::check_http(&http_client, &address, port, &path, true, expected_status, Duration::from_secs(5), hostname_override.as_deref())
                                     .await
                                     .unwrap_or(CheckResult::Down)
                             }
@@ -443,6 +444,7 @@ mod tests {
                     path: None,
                     expected_status: None,
                     danger_accept_invalid_certs: false,
+                    hostname: None,
                 }],
             }],
         };
@@ -508,6 +510,7 @@ mod tests {
                         path: None,
                         expected_status: None,
                         danger_accept_invalid_certs: false,
+                        hostname: None,
                     },
                     ServiceConfig {
                         name: "web".to_string(),
@@ -516,6 +519,7 @@ mod tests {
                         path: None,
                         expected_status: None,
                         danger_accept_invalid_certs: false,
+                        hostname: None,
                     },
                 ],
             }],
