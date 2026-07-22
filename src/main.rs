@@ -2,17 +2,32 @@ mod check;
 mod config;
 mod display;
 mod engine;
+mod logging;
 
 use std::env;
 use std::path::PathBuf;
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
 
+struct CliArgs {
+    config_path: Option<PathBuf>,
+    log_file: Option<PathBuf>,
+    log_level: Option<String>,
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let config_path = parse_args();
+    let args = parse_args();
 
-    match config::Config::load(config_path.as_deref()) {
+    if let Some(ref log_file) = args.log_file {
+        let level = args.log_level.as_deref().unwrap_or("info");
+        if let Err(e) = logging::init(log_file, level) {
+            eprintln!("Error: failed to initialize logging: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    match config::Config::load(args.config_path.as_deref()) {
         Ok(config) => {
             let engine = match engine::Engine::new(config) {
                 Ok(e) => e,
@@ -106,24 +121,26 @@ async fn main() {
     }
 }
 
-fn parse_args() -> Option<PathBuf> {
+fn parse_args() -> CliArgs {
     let args: Vec<String> = env::args().collect();
     parse_args_from(args.iter().skip(1))
 }
 
-fn parse_args_from<'a, I>(args: I) -> Option<PathBuf>
+fn parse_args_from<'a, I>(args: I) -> CliArgs
 where
     I: IntoIterator<Item = &'a String>,
 {
     let args: Vec<&'a String> = args.into_iter().collect();
-    let mut result = None;
+    let mut config_path: Option<PathBuf> = None;
+    let mut log_file: Option<PathBuf> = None;
+    let mut log_level: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i];
         if arg == "--config" {
             i += 1;
             if i < args.len() {
-                result = Some(PathBuf::from(args[i]));
+                config_path = Some(PathBuf::from(args[i]));
             } else {
                 eprintln!("Error: --config requires a path argument");
                 std::process::exit(1);
@@ -133,9 +150,43 @@ where
                 eprintln!("Error: --config= requires a non-empty path");
                 std::process::exit(1);
             }
-            result = Some(PathBuf::from(path));
+            config_path = Some(PathBuf::from(path));
+        } else if arg == "--log-file" {
+            i += 1;
+            if i < args.len() {
+                log_file = Some(PathBuf::from(args[i]));
+            } else {
+                eprintln!("Error: --log-file requires a path argument");
+                std::process::exit(1);
+            }
+        } else if let Some(path) = arg.strip_prefix("--log-file=") {
+            if path.is_empty() {
+                eprintln!("Error: --log-file= requires a non-empty path");
+                std::process::exit(1);
+            }
+            log_file = Some(PathBuf::from(path));
+        } else if arg == "--log-level" {
+            i += 1;
+            if i < args.len() {
+                let level = args[i].to_lowercase();
+                if !["error", "warn", "info", "debug"].contains(&level.as_str()) {
+                    eprintln!("Error: invalid log level '{}'. Valid values: error, warn, info, debug", args[i]);
+                    std::process::exit(1);
+                }
+                log_level = Some(level);
+            } else {
+                eprintln!("Error: --log-level requires a level argument");
+                std::process::exit(1);
+            }
+        } else if let Some(level) = arg.strip_prefix("--log-level=") {
+            let level = level.to_lowercase();
+            if !["error", "warn", "info", "debug"].contains(&level.as_str()) {
+                eprintln!("Error: invalid log level '{}'. Valid values: error, warn, info, debug", level);
+                std::process::exit(1);
+            }
+            log_level = Some(level);
         } else if arg == "--help" || arg == "-h" {
-            println!("Usage: tmonitor [--config <path>]");
+            println!("Usage: tmonitor [--config <path>] [--log-file <path>] [--log-level <level>]");
             std::process::exit(0);
         } else {
             eprintln!("Error: unknown argument '{}'", arg);
@@ -144,30 +195,99 @@ where
         i += 1;
     }
 
-    result
+    CliArgs { config_path, log_file, log_level }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn assert_no_log(args: &CliArgs) {
+        assert!(args.log_file.is_none());
+        assert!(args.log_level.is_none());
+    }
+
     #[test]
     fn test_parse_args_no_args() {
         let result = parse_args_from(std::iter::empty());
-        assert!(result.is_none());
+        assert!(result.config_path.is_none());
+        assert_no_log(&result);
     }
 
     #[test]
     fn test_parse_args_with_config() {
         let args = vec!["--config".to_string(), "/path/to/config.toml".to_string()];
         let result = parse_args_from(args.iter());
-        assert_eq!(result, Some(PathBuf::from("/path/to/config.toml")));
+        assert_eq!(result.config_path, Some(PathBuf::from("/path/to/config.toml")));
+        assert_no_log(&result);
     }
 
     #[test]
     fn test_parse_args_with_config_equals() {
         let args = vec!["--config=/path/to/config.toml".to_string()];
         let result = parse_args_from(args.iter());
-        assert_eq!(result, Some(PathBuf::from("/path/to/config.toml")));
+        assert_eq!(result.config_path, Some(PathBuf::from("/path/to/config.toml")));
+        assert_no_log(&result);
+    }
+
+    #[test]
+    fn test_parse_args_log_file() {
+        let args = vec!["--log-file".to_string(), "/tmp/test.log".to_string()];
+        let result = parse_args_from(args.iter());
+        assert!(result.config_path.is_none());
+        assert_eq!(result.log_file, Some(PathBuf::from("/tmp/test.log")));
+        assert!(result.log_level.is_none());
+    }
+
+    #[test]
+    fn test_parse_args_log_file_equals() {
+        let args = vec!["--log-file=/tmp/test.log".to_string()];
+        let result = parse_args_from(args.iter());
+        assert_eq!(result.log_file, Some(PathBuf::from("/tmp/test.log")));
+        assert!(result.log_level.is_none());
+    }
+
+    #[test]
+    fn test_parse_args_log_level() {
+        let args = vec!["--log-level".to_string(), "debug".to_string()];
+        let result = parse_args_from(args.iter());
+        assert!(result.log_file.is_none());
+        assert_eq!(result.log_level, Some("debug".to_string()));
+    }
+
+    #[test]
+    fn test_parse_args_log_level_equals() {
+        let args = vec!["--log-level=debug".to_string()];
+        let result = parse_args_from(args.iter());
+        assert!(result.log_file.is_none());
+        assert_eq!(result.log_level, Some("debug".to_string()));
+    }
+
+    #[test]
+    fn test_parse_args_log_file_and_level() {
+        let args = vec!["--log-file".to_string(), "/tmp/t.log".to_string(), "--log-level".to_string(), "warn".to_string()];
+        let result = parse_args_from(args.iter());
+        assert_eq!(result.log_file, Some(PathBuf::from("/tmp/t.log")));
+        assert_eq!(result.log_level, Some("warn".to_string()));
+    }
+
+    #[test]
+    fn test_parse_args_all_flags() {
+        let args = vec![
+            "--config".to_string(), "cfg.toml".to_string(),
+            "--log-file".to_string(), "log.txt".to_string(),
+            "--log-level".to_string(), "error".to_string(),
+        ];
+        let result = parse_args_from(args.iter());
+        assert_eq!(result.config_path, Some(PathBuf::from("cfg.toml")));
+        assert_eq!(result.log_file, Some(PathBuf::from("log.txt")));
+        assert_eq!(result.log_level, Some("error".to_string()));
+    }
+
+    #[test]
+    fn test_parse_args_log_level_case_insensitive() {
+        let args = vec!["--log-level".to_string(), "DEBUG".to_string()];
+        let result = parse_args_from(args.iter());
+        assert_eq!(result.log_level, Some("debug".to_string()));
     }
 }

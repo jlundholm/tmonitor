@@ -34,7 +34,7 @@ pub async fn ping_host(address: &str) -> Result<CheckResult, CheckError> {
         Ok(Ok(_)) => Ok(CheckResult::Up),
         Ok(Err(_)) => Ok(CheckResult::Down),
         Err(_) => {
-            eprintln!("[ping_host] {} timed out", address);
+            log::debug!("[ping_host] {} timed out", address);
             Ok(CheckResult::Down)
         }
     }
@@ -79,11 +79,11 @@ pub async fn check_http(
 
     let effective_client = if timeout != Duration::ZERO { &timeout_client } else { client };
 
-    eprintln!("[check_http] url={} timeout={:?}", url, timeout);
+    log::debug!("[check_http] url={} timeout={:?}", url, timeout);
     match tokio::time::timeout(timeout, effective_client.get(&url).send()).await {
         Ok(Ok(response)) => {
             let status = response.status().as_u16();
-            eprintln!("[check_http] url={} status={}", url, status);
+            log::debug!("[check_http] url={} status={}", url, status);
             let _ = response.bytes().await;
             match expected_status {
                 Some(expected) if status == expected => Ok(CheckResult::Up),
@@ -93,11 +93,11 @@ pub async fn check_http(
             }
         }
         Ok(Err(e)) => {
-            eprintln!("[check_http] url={} error={}", url, e);
+            log::debug!("[check_http] url={} error={}", url, e);
             Ok(CheckResult::Down)
         }
         Err(_) => {
-            eprintln!("[check_http] url={} timed out after {:?}", url, timeout);
+            log::debug!("[check_http] url={} timed out after {:?}", url, timeout);
             Ok(CheckResult::Down)
         }
     }

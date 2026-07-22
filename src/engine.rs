@@ -154,13 +154,13 @@ impl Engine {
                         };
                         match svc_type.as_str() {
                             "http" => {
-                                eprintln!("[engine] check {} type=http addr={}:{}", key_label, address, port);
+                                log::info!("check {} type=http addr={}:{}", key_label, address, port);
                                 check::check_http(&http_client, &address, port, &path, false, expected_status, Duration::from_secs(5))
                                     .await
                                     .unwrap_or(CheckResult::Down)
                             }
                             "https" => {
-                                eprintln!("[engine] check {} type=https addr={}:{}", key_label, address, port);
+                                log::info!("check {} type=https addr={}:{}", key_label, address, port);
                                 check::check_http(&http_client, &address, port, &path, true, expected_status, Duration::from_secs(5))
                                     .await
                                     .unwrap_or(CheckResult::Down)
@@ -191,6 +191,9 @@ impl Engine {
                     if let Some(cell_state) = state.get_mut(cell_key) {
                         if *result != cell_state.status {
                             let now = Instant::now();
+                            let old_status = cell_state.status;
+                            let label = cell_key.label();
+                            log::info!("{} transitioned: {:?} → {:?}", label, old_status, *result);
                             cell_state.status = *result;
                             match *result {
                                 CheckResult::Up => {
@@ -209,6 +212,10 @@ impl Engine {
             drop(state);
 
             let elapsed = cycle_start.elapsed();
+            let host_count = self.config.hosts.len();
+            let svc_count: usize = self.config.hosts.iter().map(|h| h.services.len()).sum();
+            let down_count = results.values().filter(|r| **r == CheckResult::Down).count();
+            log::info!("Cycle complete: {} hosts, {} services, {} down, {:.2}s", host_count, svc_count, down_count, elapsed.as_secs_f64());
             let interval = Duration::from_secs(self.config.interval_secs);
             if elapsed < interval {
                 tokio::select! {

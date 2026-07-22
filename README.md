@@ -59,7 +59,33 @@ port = 22
 | Flag | Description |
 |------|-------------|
 | `--config <path>` | Path to TOML config file |
+| `--log-file <path>` | Write diagnostic logs to file (off by default) |
+| `--log-level <level>` | Log level: `error`, `warn`, `info`, `debug` (default: `info`, requires `--log-file`) |
 | `--help`, `-h` | Show usage information |
+
+## Diagnostic Logging
+
+When debugging issues (e.g., hosts always showing "Up" when they shouldn't), enable file logging:
+
+```bash
+tmonitor --log-file /tmp/tmonitor.log
+```
+
+This writes structured entries to the file without interfering with the TUI display:
+
+```
+[2026-07-22T10:30:00Z] [INFO] localhost transitioned: Up → Down
+[2026-07-22T10:30:05Z] [INFO] Cycle complete: 3 hosts, 5 services, 2 down, 4.21s
+[2026-07-22T10:31:00Z] [INFO] localhost transitioned: Down → Up
+```
+
+For more verbose output including per-probe timings and HTTP response details:
+
+```bash
+tmonitor --log-file /tmp/tmonitor.log --log-level debug
+```
+
+Logging is entirely opt-in — no log file is created and no disk writes occur when `--log-file` is not specified. This preserves the zero-disk-write guarantee for normal operation.
 
 ## Building from Source
 
