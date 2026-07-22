@@ -25,6 +25,7 @@ async fn main() {
             eprintln!("Error: failed to initialize logging: {}", e);
             std::process::exit(1);
         }
+        log::info!("Logging initialized (level={})", level);
     } else if args.log_level.is_some() {
         eprintln!("Warning: --log-level requires --log-file to be effective");
     }
@@ -79,40 +80,29 @@ async fn main() {
                 signal_cancel.cancel();
             });
 
-            tokio::select! {
-                result = engine_handle => {
-                    let has_error = match result {
-                        Ok(Ok(())) => false,
-                        Ok(Err(e)) => {
-                            eprintln!("Engine error: {}", e);
-                            true
-                        }
-                        Err(e) => {
-                            eprintln!("Engine panicked: {}", e);
-                            true
-                        }
-                    };
-                    cancel.cancel();
-                    if has_error {
-                        std::process::exit(1);
-                    }
+            let display_result = display_handle.await;
+            match &display_result {
+                Ok(Err(e)) => {
+                    eprintln!("Display error: {}", e);
+                    log::error!("Display error: {}", e);
                 }
-                result = display_handle => {
-                    let has_error = match result {
-                        Ok(Ok(())) => false,
-                        Ok(Err(e)) => {
-                            eprintln!("Display error: {}", e);
-                            true
-                        }
-                        Err(e) => {
-                            eprintln!("Display panicked: {}", e);
-                            true
-                        }
-                    };
-                    cancel.cancel();
-                    if has_error {
-                        std::process::exit(1);
-                    }
+                Err(e) => {
+                    eprintln!("Display panicked: {}", e);
+                }
+                Ok(Ok(())) => {}
+            }
+
+            cancel.cancel();
+            let engine_result = engine_handle.await;
+            match engine_result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    eprintln!("Engine error: {}", e);
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("Engine panicked: {}", e);
+                    std::process::exit(1);
                 }
             }
         }
