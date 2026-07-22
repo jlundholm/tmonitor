@@ -36,6 +36,9 @@ impl log::Log for FileLogger {
         ).is_err() {
             LOG_WRITE_ERROR.store(true, Ordering::Relaxed);
         }
+        if writer.flush().is_err() {
+            LOG_WRITE_ERROR.store(true, Ordering::Relaxed);
+        }
     }
 
     fn flush(&self) {
