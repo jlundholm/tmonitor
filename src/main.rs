@@ -25,6 +25,8 @@ async fn main() {
             eprintln!("Error: failed to initialize logging: {}", e);
             std::process::exit(1);
         }
+    } else if args.log_level.is_some() {
+        eprintln!("Warning: --log-level requires --log-file to be effective");
     }
 
     match config::Config::load(args.config_path.as_deref()) {
@@ -153,7 +155,7 @@ where
             config_path = Some(PathBuf::from(path));
         } else if arg == "--log-file" {
             i += 1;
-            if i < args.len() {
+            if i < args.len() && !args[i].starts_with("--") {
                 log_file = Some(PathBuf::from(args[i]));
             } else {
                 eprintln!("Error: --log-file requires a path argument");

@@ -1,11 +1,20 @@
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+
+static LOG_WRITE_ERROR: AtomicBool = AtomicBool::new(false);
 
 struct FileLogger {
     writer: Mutex<BufWriter<std::fs::File>>,
     level: log::LevelFilter,
+}
+
+impl FileLogger {
+    fn has_write_error() -> bool {
+        LOG_WRITE_ERROR.load(Ordering::Relaxed)
+    }
 }
 
 impl log::Log for FileLogger {
@@ -18,21 +27,30 @@ impl log::Log for FileLogger {
             return;
         }
         let mut writer = self.writer.lock().unwrap();
-        let _ = writeln!(
+        if writeln!(
             writer,
             "[{}] [{}] {}",
             chrono_now(),
             record.level(),
             record.args()
-        );
-        let _ = writer.flush();
+        ).is_err() {
+            LOG_WRITE_ERROR.store(true, Ordering::Relaxed);
+        }
     }
 
     fn flush(&self) {
-        let _ = self.writer.lock().unwrap().flush();
+        if self.writer.lock().unwrap().flush().is_err() {
+            LOG_WRITE_ERROR.store(true, Ordering::Relaxed);
+        }
     }
 }
 
+/// Returns current UTC time as ISO 8601 string.
+///
+/// NOTE: Uses `SystemTime::now()` which returns the system clock time.
+/// On Linux (where the hardware clock is typically UTC), this produces correct UTC timestamps.
+/// On systems where the hardware clock is set to local time, timestamps may be incorrect.
+/// For precise UTC timestamps on all platforms, consider using the `chrono` crate.
 fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let duration = SystemTime::now()
@@ -112,6 +130,10 @@ pub fn init(path: &Path, level: &str) -> Result<(), LoggingError> {
         .map_err(LoggingError::Io)?;
 
     Ok(())
+}
+
+pub fn has_write_error() -> bool {
+    FileLogger::has_write_error()
 }
 
 #[cfg(test)]
@@ -207,9 +229,7 @@ mod tests {
         let log_path = dir.path().join("test.log");
 
         let result = init(&log_path, "debug");
-        if result.is_err() {
-            return;
-        }
+        assert!(result.is_ok(), "init should succeed: {:?}", result.err());
 
         assert!(log_path.exists());
 
