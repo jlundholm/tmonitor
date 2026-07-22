@@ -78,11 +78,18 @@ pub async fn check_http(
     let url = format!("{}://{}:{}{}", scheme, host, port, path);
 
     log::debug!("[check_http] url={} timeout={:?}", url, timeout);
-    match tokio::time::timeout(timeout, client.get(&url).send()).await {
-        Ok(Ok(response)) => {
-            let status = response.status().as_u16();
-            log::debug!("[check_http] url={} status={}", url, status);
-            let _ = response.bytes().await;
+    
+    // Wrap the entire request (send + body read) in the timeout
+    let result = tokio::time::timeout(timeout, async {
+        let response = client.get(&url).send().await?;
+        let status = response.status().as_u16();
+        log::debug!("[check_http] url={} status={}", url, status);
+        let _ = response.bytes().await;
+        Ok::<u16, reqwest::Error>(status)
+    }).await;
+    
+    match result {
+        Ok(Ok(status)) => {
             match expected_status {
                 Some(expected) if status == expected => Ok(CheckResult::Up),
                 Some(_) => Ok(CheckResult::Down),
