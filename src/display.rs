@@ -49,8 +49,13 @@ impl App {
     }
 }
 
+struct CellSnapshot {
+    status: crate::check::CheckResult,
+    duration: Duration,
+}
+
 impl App {
-    fn render(&self, frame: &mut Frame) {
+    fn render(&self, frame: &mut Frame, snapshot: &[CellSnapshot]) {
         let area = frame.area();
         let cell_count = self.cell_order.len();
 
@@ -65,7 +70,7 @@ impl App {
 
         render_top_bar(frame, chunks[0]);
 
-        if cell_count == 0 {
+        if cell_count == 0 || snapshot.len() != cell_count {
             return;
         }
 
@@ -77,12 +82,6 @@ impl App {
             available_width
         };
 
-        let guard = self.state.try_read();
-        let state_map = match guard {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-
         for col in 0..columns {
             let col_x = grid_area.x + (col * actual_cell_width) as u16;
 
@@ -91,31 +90,18 @@ impl App {
                 if idx >= cell_count {
                     break;
                 }
-                let cell_key = &self.cell_order[idx];
-                let cell_state = state_map.get(cell_key);
+                let cell = &snapshot[idx];
+                let cell_label = self.cell_order[idx].label();
                 let cell_y = grid_area.y + (row * 2) as u16;
                 let cell_rect = Rect::new(col_x, cell_y, actual_cell_width as u16, 1);
 
-                let (label, status_color) = match cell_state {
-                    Some(cs) => match cs.status {
-                        crate::check::CheckResult::Up => ("Up", COLOR_UP),
-                        crate::check::CheckResult::Down => ("Down", COLOR_DOWN),
-                    },
-                    None => ("?", COLOR_DIM),
+                let (label, status_color) = match cell.status {
+                    crate::check::CheckResult::Up => ("Up", COLOR_UP),
+                    crate::check::CheckResult::Down => ("Down", COLOR_DOWN),
                 };
 
-                let cell_label = cell_key.label();
-
                 if cell_width >= 22 {
-                    let duration_str = match cell_state {
-                        Some(cs) => match cs.status {
-                            crate::check::CheckResult::Up => format_duration(cs.uptime_duration()),
-                            crate::check::CheckResult::Down => {
-                                format_duration(cs.downtime_duration())
-                            }
-                        },
-                        None => String::new(),
-                    };
+                    let duration_str = format_duration(cell.duration);
                     let line = Line::from(vec![
                         ratatui::text::Span::styled(
                             format!("{}  {}", cell_label, label),
@@ -224,7 +210,32 @@ pub async fn run_display(
     let _guard = TerminalGuard;
 
     loop {
-        terminal.draw(|f| app.render(f))?;
+        let snapshot = {
+            let guard = app.state.read().await;
+            app.cell_order
+                .iter()
+                .map(|key| {
+                    guard.get(key).map_or(
+                        CellSnapshot {
+                            status: crate::check::CheckResult::Up,
+                            duration: Duration::ZERO,
+                        },
+                        |hs| {
+                            let duration = match hs.status {
+                                crate::check::CheckResult::Up => hs.uptime_duration(),
+                                crate::check::CheckResult::Down => hs.downtime_duration(),
+                            };
+                            CellSnapshot {
+                                status: hs.status,
+                                duration,
+                            }
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        terminal.draw(|f| app.render(f, &snapshot))?;
 
         if event::poll(Duration::from_millis(250))? {
             if let Event::Key(key) = event::read()? {
