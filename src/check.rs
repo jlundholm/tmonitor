@@ -81,9 +81,7 @@ pub async fn check_http(
 
     log::debug!("[check_http] url={} timeout={:?} hostname_override={:?}", url, timeout, hostname_override);
     
-    // Create request with explicit timeout and user agent
     let mut request_builder = client.get(&url)
-        .timeout(timeout)
         .header("User-Agent", "tmonitor/0.1.0");
     
     // If hostname override is provided, use it for Host header (important for SNI)
@@ -91,7 +89,8 @@ pub async fn check_http(
         request_builder = request_builder.header("Host", hostname);
     }
     
-    // Also wrap in tokio timeout as double protection
+    // Hard timeout cutoff: client-level reqwest timeout applies during the request,
+    // and tokio timeout guarantees a hard cancel if the client timeout doesn't fire.
     let result = tokio::time::timeout(timeout, async {
         log::debug!("[check_http] sending request for url={}", url);
         let response = request_builder.send().await?;
