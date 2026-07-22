@@ -105,6 +105,7 @@ pub fn build_http_client(timeout: Duration, danger_accept_invalid_certs: bool) -
     let mut builder = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(timeout)
+        .timeout(timeout)
         .redirect(reqwest::redirect::Policy::limited(5));
     if danger_accept_invalid_certs {
         builder = builder.danger_accept_invalid_certs(true);
