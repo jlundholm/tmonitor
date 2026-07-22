@@ -166,7 +166,8 @@ cargo build --release
 ## ICMP Requirements (Linux)
 
 ICMP ping requires permission to create raw datagram sockets.
-On most Linux systems, configure the ping group range for your user's group:
+On some Linux systems, configure the ping group range for your user's group
+try it first, if all hosts go down you might need this change:
 
 ```bash
 # Replace 1000 with your user's GID (run: id -g)
