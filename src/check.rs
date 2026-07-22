@@ -103,7 +103,8 @@ pub async fn check_http(
 
 pub fn build_http_client(timeout: Duration, danger_accept_invalid_certs: bool) -> Result<reqwest::Client, CheckError> {
     let mut builder = reqwest::Client::builder()
-        .timeout(timeout)
+        .no_proxy()
+        .connect_timeout(timeout)
         .redirect(reqwest::redirect::Policy::limited(5));
     if danger_accept_invalid_certs {
         builder = builder.danger_accept_invalid_certs(true);

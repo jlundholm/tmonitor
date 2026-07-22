@@ -73,7 +73,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(config: Config) -> Result<Self, EngineError> {
         let guard = ConcurrencyGuard::new(config.concurrency)?;
-        let http_client = check::build_http_client(Duration::from_secs(5), true)?;
+        let http_client = check::build_http_client(Duration::from_secs(10), true)?;
         let mut state_map = HashMap::new();
         let mut cell_order = Vec::new();
 
