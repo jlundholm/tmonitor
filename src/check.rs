@@ -21,9 +21,15 @@ pub enum CheckError {
 pub async fn ping_host(address: &str) -> Result<CheckResult, CheckError> {
     use surge_ping::{Client, PingIdentifier, PingSequence};
 
-    let addr: std::net::IpAddr = address
-        .parse()
-        .map_err(|_| CheckError::InvalidAddress(address.to_string()))?;
+    let addr: std::net::IpAddr = match address.parse() {
+        Ok(ip) => ip,
+        Err(_) => tokio::net::lookup_host((address, 0))
+            .await
+            .map_err(|e| CheckError::InvalidAddress(format!("{address}: {e}")))?
+            .next()
+            .ok_or_else(|| CheckError::InvalidAddress(format!("{address}: no addresses found")))?
+            .ip(),
+    };
 
     let client = Client::new(&surge_ping::Config::default())
         .map_err(|e| CheckError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
