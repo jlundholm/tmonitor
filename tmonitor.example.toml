@@ -28,6 +28,7 @@
 #type = "https"
 #path = "/api/status"
 #expected_status = 200
+#danger_accept_invalid_certs = true
 
 #[[hosts]]
 #name = "server"

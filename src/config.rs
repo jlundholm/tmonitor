@@ -34,6 +34,8 @@ pub struct ServiceConfig {
     pub service_type: String,
     pub path: Option<String>,
     pub expected_status: Option<u16>,
+    #[serde(default)]
+    pub danger_accept_invalid_certs: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
