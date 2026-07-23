@@ -9,7 +9,7 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 serde_spanned = "0.6"
 thiserror = "2"
-tokio = { version = "1.52", features = ["rt", "macros", "signal", "time", "net", "sync"] }
+tokio = { version = "1.52", features = ["rt", "rt-multi-thread", "macros", "signal", "time", "net", "sync"] }
 surge-ping = "0.8"
 tokio-util = { version = "0.7", features = ["rt"] }
 ratatui = { version = "0.30", features = ["crossterm"] }
